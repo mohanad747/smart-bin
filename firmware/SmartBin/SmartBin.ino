@@ -215,7 +215,12 @@ void keepWifi(uint32_t now) {
     configTime(4 * 3600, 0, "pool.ntp.org", "time.google.com");   // Oman time (UTC+4) from NTP
   }
   if (!connected && now - lastWifiTryMs >= WIFI_RETRY_MS) {
-    Serial.println("Wi-Fi down, trying again...");
+    wl_status_t st = WiFi.status();
+    const char* why = st == WL_NO_SSID_AVAIL   ? "network not found (name wrong, out of range or 5 GHz only?)"
+                    : st == WL_CONNECT_FAILED  ? "connection failed (wrong password?)"
+                    : st == WL_CONNECTION_LOST ? "connection lost"
+                    : "no answer from the network";
+    Serial.printf("Wi-Fi down: %s. Looking for \"%s\", trying again...\n", why, WIFI_SSID);
     WiFi.disconnect();
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     lastWifiTryMs = now;

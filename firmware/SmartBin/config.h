@@ -25,7 +25,7 @@
 #define DHT_MS             2000UL   // the DHT22 cannot be read faster than every 2 s
 #define HAZARD_UPLOAD_MS   2000UL   // while VAPOUR / FIRE: upload every 2 s (normal uses the server's interval)
 #define HTTP_TIMEOUT_MS    4000     // never wait longer than this for the server
-#define WIFI_RETRY_MS     10000UL   // try to reconnect every 10 s when Wi-Fi is down
+#define WIFI_RETRY_MS     15000UL   // try to reconnect every 15 s when Wi-Fi is down
 #define MQ2_WARMUP_S         60     // MQ-2 heater warm-up: gas is ignored before this (it reads high)
 
 // Hold times stop the state flickering on the edge of a threshold
