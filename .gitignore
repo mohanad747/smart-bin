@@ -1,0 +1,12 @@
+# Secrets - never commit
+config.php
+firmware/SmartBin/secrets.h
+
+# Old practice version (its db.php holds a password)
+_practice/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

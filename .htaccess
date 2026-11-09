@@ -1,0 +1,5 @@
+# Keep secrets and docs out of the browser
+<FilesMatch "^(config\.php|config\.sample\.php|.*\.md|\.git.*)$">
+    Require all denied
+</FilesMatch>
+Options -Indexes
