@@ -5,10 +5,13 @@
 // Body (JSON):
 //   {"bin_id":"BIN-01","token":"...","distance_cm":42.3,"gas_raw":812,
 //    "flame":false,"temp_c":31.4,"humidity":40.2,"state":"NORMAL",
-//    "fan":false,"buzzer":false,"uptime_s":1234,"rssi":-61,"fw":"1.0.0"}
+//    "fan":false,"buzzer":false,"uptime_s":1234,"rssi":-61,"fw":"1.1.0",
+//    "test":false}
+//   "test" (optional) = true when the state comes from a test command
+//   started on the Simulator page, not from the sensors.
 //
 // Replies:
-//   200 {"ok":true,"thresholds":{...}}
+//   200 {"ok":true,"thresholds":{...},"test":null | {"mode":"FIRE","seconds_left":23}}
 //   401 {"ok":false,"error":"invalid token"}
 //   400 {"ok":false,"error":"<reason>"}         (nothing is saved)
 //
@@ -19,6 +22,7 @@
 
 require __DIR__ . '/../lib/db.php';
 require __DIR__ . '/../lib/alerts.php';
+require __DIR__ . '/../lib/test_mode.php';
 
 const MQ2_WARMUP_S  = 60;   // MQ-2 reads high while its heater warms up: ignore gas before this
 const MERGE_GAP_S   = 120;  // a hazard that comes back within 2 min continues the same event
@@ -88,6 +92,7 @@ $uptime   = number_in($in, 'uptime_s', 0, 4294967295, true);
 $rssi     = number_in($in, 'rssi', -127, 0, true);
 $uptime   = $uptime === null ? null : (int)$uptime;
 $rssi     = $rssi === null ? null : (int)$rssi;
+$is_test  = array_key_exists('test', $in) && $in['test'] !== null ? bool_in($in, 'test') : 0;
 
 $state = $in['state'] ?? null;
 if (!in_array($state, ['NORMAL', 'VAPOUR', 'FIRE'], true)) {
@@ -144,11 +149,11 @@ $conn->begin_transaction();
 // --- save the reading (D2) ---
 db_exec($conn,
     'INSERT INTO readings (bin_id, distance_cm, fill_pct, gas_raw, flame, temp_c, humidity,
-                           state, server_state, fan, buzzer, uptime_s, rssi, fw)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    'sddiiddssiiiis',
+                           state, server_state, fan, buzzer, uptime_s, rssi, fw, is_test)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'sddiiddssiiiisi',
     [$bin_id, $distance, $fill, $gas, $flame, $temp, $humidity,
-     $state, $server_state, $fan, $buzzer, $uptime, $rssi, $fw]);
+     $state, $server_state, $fan, $buzzer, $uptime, $rssi, $fw, $is_test]);
 
 // --- update the bin (D1); COALESCE keeps the last good value when a sensor sent null ---
 db_exec($conn,
@@ -184,8 +189,12 @@ function peak($old, $new)
     return max((float)$old, (float)$new);
 }
 
-if ($open !== null && $open['type'] !== $bin_state) {
-    // state changed (back to NORMAL, or VAPOUR <-> FIRE): close the old event
+// The hazard is a test only if the bin says so AND the server's own check
+// of the sensor values found nothing (a real fire during a test is real).
+$event_is_test = ($is_test && $rank[$server_state] < $rank[$bin_state]) ? 1 : 0;
+
+if ($open !== null && ($open['type'] !== $bin_state || (int)$open['is_test'] !== $event_is_test)) {
+    // state changed (back to NORMAL, VAPOUR <-> FIRE, or test <-> real): close the old event
     db_exec($conn, 'UPDATE events SET ended_at = NOW() WHERE id = ?', 'i', [$open['id']]);
     $open = null;
 }
@@ -194,18 +203,19 @@ if ($bin_state !== 'NORMAL') {
     if ($open === null) {
         // Came back within MERGE_GAP_S? Then it is the same event (no second alert).
         $recent = db_one($conn,
-            'SELECT * FROM events WHERE bin_id = ? AND type = ? AND ended_at IS NOT NULL
+            'SELECT * FROM events WHERE bin_id = ? AND type = ? AND is_test = ? AND ended_at IS NOT NULL
                AND ended_at >= NOW() - INTERVAL ? SECOND
              ORDER BY id DESC LIMIT 1',
-            'ssi', [$bin_id, $bin_state, MERGE_GAP_S]);
+            'ssii', [$bin_id, $bin_state, $event_is_test, MERGE_GAP_S]);
         if ($recent !== null) {
             db_exec($conn, 'UPDATE events SET ended_at = NULL WHERE id = ?', 'i', [$recent['id']]);
             $open = $recent;
         } else {
             db_exec($conn,
-                'INSERT INTO events (bin_id, type, started_at, peak_temp_c, peak_gas_raw)
-                 VALUES (?, ?, NOW(), ?, ?)',
-                'ssdi', [$bin_id, $bin_state, $temp, $gas]);
+                'INSERT INTO events (bin_id, type, started_at, peak_temp_c, peak_gas_raw, is_test, note)
+                 VALUES (?, ?, NOW(), ?, ?, ?, ?)',
+                'ssdiis', [$bin_id, $bin_state, $temp, $gas, $event_is_test,
+                           $event_is_test ? 'Test from the Simulator page' : null]);
             $event_id = $conn->insert_id;
             if ($bin_state === 'FIRE') {
                 $fire_event = $event_id;    // NEW fire event -> one urgent alert
@@ -291,6 +301,8 @@ db_exec($conn,
     'dsiis', [$rate === null ? null : round($rate, 2), $status,
               $seconds_to_full, $seconds_to_full, $bin_id]);
 
+$test = current_test($conn, $bin_id);   // test started on the Simulator page, if any
+
 $conn->commit();
 
 // ---------------------------------------------------------------------
@@ -302,7 +314,7 @@ $reply = json_encode(['ok' => true, 'thresholds' => [
     'temp_rise_c'        => $th['temp_rise_c'],
     'temp_rise_window_s' => $th['temp_rise_window_s'],
     'upload_interval_s'  => $th['upload_interval_s'],
-]]);
+], 'test' => test_for_device($test)]);
 
 ignore_user_abort(true);     // keep running after the ESP32 hangs up
 http_response_code(200);
@@ -327,7 +339,7 @@ $now_text = date('Y-m-d H:i:s');
 
 if ($fire_event !== null) {
     $show_temp = $temp ?? ($bin['last_temp_c'] === null ? null : (float)$bin['last_temp_c']);
-    [$subject, $text] = fire_message($bin, $show_temp, $now_text);
+    [$subject, $text] = fire_message($bin, $show_temp, $now_text, (bool)$event_is_test);
     $results = send_alert($conn, $CONFIG, 'FIRE', $bin_id, $fire_event, $subject, $text);
     if (any_success($results)) {
         db_exec($conn, 'UPDATE events SET alert_sent = 1 WHERE id = ?', 'i', [$fire_event]);

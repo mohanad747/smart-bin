@@ -20,12 +20,14 @@ function maps_link(array $bin): string
     return 'https://maps.google.com/?q=' . $bin['lat'] . ',' . $bin['lng'];
 }
 
-// Text of the FIRE alert (plain text, works for email and WhatsApp)
-function fire_message(array $bin, ?float $temp_c, string $time): array
+// Text of the FIRE alert (plain text, works for email and WhatsApp).
+// $is_test = started from the Simulator page: clearly marked as a test.
+function fire_message(array $bin, ?float $temp_c, string $time, bool $is_test = false): array
 {
     $temp = $temp_c === null ? 'not available' : number_format($temp_c, 1) . ' °C';
-    $subject = "FIRE ALERT - {$bin['bin_id']} {$bin['name']}";
-    $text = "🔥 FIRE ALERT - Smart Bin\n"
+    $subject = ($is_test ? 'TEST - ' : '') . "FIRE ALERT - {$bin['bin_id']} {$bin['name']}";
+    $text = ($is_test ? "🧪 TEST ONLY - this is a drill, there is no real fire.\n" : '')
+          . "🔥 FIRE ALERT - Smart Bin\n"
           . "Bin: {$bin['bin_id']} ({$bin['name']})\n"
           . "Location: {$bin['location_text']}\n"
           . "Map: " . maps_link($bin) . "\n"

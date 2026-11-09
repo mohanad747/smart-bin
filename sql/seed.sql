@@ -18,7 +18,7 @@ ON DUPLICATE KEY UPDATE bin_id = bin_id;
 -- The prototype bin at UTAS Muscat, South Al Khuwair
 -- empty_depth_cm: measure from the ultrasonic sensor to the bottom of YOUR empty bin.
 INSERT INTO bins (bin_id, name, location_text, lat, lng, device_token, empty_depth_cm)
-VALUES ('BIN-01', 'Prototype pedal bin',
+VALUES ('BIN-01', 'Prototype bin',
         'UTAS Muscat campus, South Al Khuwair, Muscat',
         23.577815, 58.430020,
         'afda09df27a02bdb9b94608761c7c7d4', 40.0)

@@ -16,6 +16,10 @@
 //      during a hazard, otherwise every upload_interval_s (10 s).
 //   4. take the thresholds from the server's reply and save them in flash,
 //      so the operator can change them without reprogramming.
+//   5. test mode: the Simulator page can tell the bin "act as if you saw a
+//      fire / gas leak" for a few seconds. The bin then runs the same
+//      outputs and uploads (marked "test"), so the buzzer and fan can be
+//      shown working without a real fire. Real sensors always win.
 // =====================================================================
 
 #include <WiFi.h>
@@ -55,9 +59,15 @@ float humidity   = NAN;
 int   gasRaw     = 0;
 bool  flame      = false;
 
-BinState state   = NORMAL;
+BinState state     = NORMAL;   // what the bin does (real state, or the test if it is more severe)
+BinState realState = NORMAL;   // from the sensors only (hold times work on this one)
 bool fanOn       = false;
 bool buzzerOn    = false;
+
+// Test mode (from the Simulator page): NORMAL = no test running
+BinState testMode    = NORMAL;
+uint32_t testUntilMs = 0;
+uint32_t lastPollMs  = 0;
 
 // Temperature history for the "sudden rise" check (one sample per DHT read)
 const int HIST = 160;                  // 160 x 2 s = 320 s, enough for a 300 s window
@@ -197,6 +207,37 @@ void applyThresholds(JsonObject t) {
 }
 
 // ---------------------------------------------------------------------
+// Test mode: take {"mode":"FIRE","seconds_left":23} or null from a reply
+// ---------------------------------------------------------------------
+void applyTest(JsonVariant t) {
+  BinState mode = NORMAL;
+  int secs = 0;
+  if (t.is<JsonObject>()) {
+    const char* m = t["mode"] | "";
+    if (strcmp(m, "FIRE") == 0)   mode = FIRE;
+    if (strcmp(m, "VAPOUR") == 0) mode = VAPOUR;
+    secs = constrain(t["seconds_left"] | 0, 0, TEST_MAX_S);
+  }
+  if (secs <= 0) mode = NORMAL;
+
+  if (mode != testMode) {
+    if (mode == NORMAL) Serial.println(">>> Test stopped from the dashboard");
+    else Serial.printf(">>> TEST %s from the dashboard for %d s\n", STATE_NAME[mode], secs);
+  }
+  testMode    = mode;
+  testUntilMs = millis() + (uint32_t)secs * 1000UL;
+}
+
+// The test also ends by itself here, even if Wi-Fi is lost during it
+bool testRunning(uint32_t now) {
+  if (testMode != NORMAL && (int32_t)(now - testUntilMs) >= 0) {
+    Serial.println(">>> Test time is over");
+    testMode = NORMAL;
+  }
+  return testMode != NORMAL;
+}
+
+// ---------------------------------------------------------------------
 // Wi-Fi + upload
 // ---------------------------------------------------------------------
 void startWifi() {
@@ -259,6 +300,7 @@ void upload() {
   doc["uptime_s"] = millis() / 1000;
   doc["rssi"]     = WiFi.RSSI();
   doc["fw"]       = FW_VERSION;
+  doc["test"]     = (state != realState);   // this state comes from a test, not the sensors
 
   String body;
   serializeJson(doc, body);
@@ -276,6 +318,7 @@ void upload() {
     JsonDocument r;
     if (!deserializeJson(r, reply) && r["ok"] == true) {
       applyThresholds(r["thresholds"].as<JsonObject>());
+      applyTest(r["test"]);
     }
     Serial.printf("Upload OK (%s)\n", STATE_NAME[state]);
   } else if (code == 401) {
@@ -287,6 +330,36 @@ void upload() {
   } else {
     Serial.printf("Upload failed: %s (is SERVER_URL right? %s)\n",
                   http.errorToString(code).c_str(), SERVER_URL);
+  }
+}
+
+// Small "any test for me?" request between uploads (api/device_poll.php),
+// so a test from the dashboard starts within about 2 s.
+void pollTest() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  static String url;
+  if (url.length() == 0) {
+    url = SERVER_URL;
+    url.replace("ingest.php", "device_poll.php");
+  }
+  JsonDocument doc;
+  doc["bin_id"] = BIN_ID;
+  doc["token"]  = DEVICE_TOKEN;
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.setConnectTimeout(TEST_POLL_TIMEOUT_MS);
+  http.setTimeout(TEST_POLL_TIMEOUT_MS);
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(body);
+  String reply = code == 200 ? http.getString() : "";
+  http.end();
+
+  JsonDocument r;
+  if (code == 200 && !deserializeJson(r, reply) && r["ok"] == true) {
+    applyTest(r["test"]);
   }
 }
 
@@ -356,14 +429,20 @@ void loop() {
   if (fireSign) lastFireSignMs = now;
   if (gasHigh)  lastGasHighMs  = now;
 
-  BinState next;
-  if (fireSign || (state == FIRE && now - lastFireSignMs < FIRE_HOLD_MS)) {
-    next = FIRE;
-  } else if (gasHigh || (state == VAPOUR && (!gasClear || now - lastGasHighMs < VAPOUR_HOLD_MS))) {
-    next = VAPOUR;
+  BinState realNext;
+  if (fireSign || (realState == FIRE && now - lastFireSignMs < FIRE_HOLD_MS)) {
+    realNext = FIRE;
+  } else if (gasHigh || (realState == VAPOUR && (!gasClear || now - lastGasHighMs < VAPOUR_HOLD_MS))) {
+    realNext = VAPOUR;
   } else {
-    next = NORMAL;
+    realNext = NORMAL;
   }
+  realState = realNext;
+
+  // A test from the dashboard only counts if it is MORE severe than what the
+  // sensors see (a real fire during a gas test is still a fire).
+  BinState next = realNext;
+  if (testRunning(now) && testMode > realNext) next = testMode;
 
   // ---- outputs: work without any network ----
   switch (next) {
@@ -374,7 +453,8 @@ void loop() {
 
   bool changed = (next != state);
   if (changed) {
-    Serial.printf(">>> State %s -> %s\n", STATE_NAME[state], STATE_NAME[next]);
+    Serial.printf(">>> State %s -> %s%s\n", STATE_NAME[state], STATE_NAME[next],
+                  next != realNext ? " (TEST)" : "");
   }
   state = next;
 
@@ -382,14 +462,14 @@ void loop() {
   struct tm tmNow;
   char clock[9] = "--:--:--";
   if (getLocalTime(&tmNow, 0)) strftime(clock, sizeof(clock), "%H:%M:%S", &tmNow);
-  Serial.printf("[%s] dist %s cm | gas %d%s | flame %s | T %s C (rise %.1f) | H %s %% | %s | fan %s buzzer %s | wifi %s\n",
+  Serial.printf("[%s] dist %s cm | gas %d%s | flame %s | T %s C (rise %.1f) | H %s %% | %s%s | fan %s buzzer %s | wifi %s\n",
                 clock,
                 isnan(distanceCm) ? "--" : String(distanceCm, 1).c_str(),
                 gasRaw, warmingUp ? " (warm-up)" : "",
                 flame ? "YES" : "no",
                 isnan(tempC) ? "--" : String(tempC, 1).c_str(), rise,
                 isnan(humidity) ? "--" : String(humidity, 0).c_str(),
-                STATE_NAME[state], fanOn ? "ON" : "off", buzzerOn ? "ON" : "off",
+                STATE_NAME[state], state != realState ? " (TEST)" : "", fanOn ? "ON" : "off", buzzerOn ? "ON" : "off",
                 WiFi.status() == WL_CONNECTED ? "ok" : "down");
 
   // ---- 3. upload: at once on a change, faster during a hazard ----
@@ -397,6 +477,11 @@ void loop() {
   if (changed || !everUploaded || now - lastUploadMs >= interval) {
     lastUploadMs = now;
     everUploaded = true;
+    lastPollMs   = now;          // the upload reply carries the test too
     upload();
+  } else if (now - lastPollMs >= TEST_POLL_MS) {
+    // ---- 4. between uploads: ask the server if a test was started ----
+    lastPollMs = now;
+    pollTest();
   }
 }

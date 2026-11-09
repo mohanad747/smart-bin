@@ -9,7 +9,8 @@
 #define WIFI_PASS     "your-hotspot-password"
 
 // Exact ingest URL from the dashboard's Settings page ("ESP32 connection").
-// The laptop IP can change when the hotspot changes.
+// The laptop IP can change when the hotspot changes. On the laptop's own
+// Windows Mobile Hotspot it is always 192.168.137.1.
 #define SERVER_URL    "http://192.168.1.10/smart_bin/api/ingest.php"
 
 // Must match the bin's row on the Settings page

@@ -119,6 +119,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .chip.EMPTIED { background: var(--accent); }
 .chip.OFFLINE, .chip.off { background: var(--offline); }
 .chip.on { background: var(--accent); }
+.chip.TEST { background: #6a1b9a; }   /* started from the Simulator page, not a real hazard */
 
 /* ---------- charts ---------- */
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

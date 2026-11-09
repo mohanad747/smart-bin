@@ -1,8 +1,10 @@
 <?php
 // =====================================================================
-// Bin simulator (login required) - test and demo without the hardware.
-// It sends fake readings from the browser to the REAL api/ingest.php,
-// exactly like the ESP32 would, so the whole server path is tested.
+// Bin simulator (login required). Two parts:
+//  1. Real bin test: makes the ESP32 act as if it saw a fire (buzzer ON)
+//     or a gas leak (fan ON), so the circuit reacts too (api/test_cmd.php).
+//  2. Virtual bin: sends fake readings from the browser to the REAL
+//     api/ingest.php, exactly like the ESP32 would - no hardware needed.
 // =====================================================================
 
 require __DIR__ . '/../lib/auth.php';
@@ -23,13 +25,44 @@ $active     = 'sim';
 require __DIR__ . '/../lib/header.php';
 ?>
 <main>
+  <?php if (!$sim_bins): ?>
+  <section class="panel"><p class="flash err">No active bins. Add one on the Settings page first.</p></section>
+  <?php else: ?>
   <section class="panel">
-    <h2>Bin simulator</h2>
-    <p class="small muted">Sends readings to <code>api/ingest.php</code> the same way the ESP32 does.
-      Keep the dashboard open in another tab to watch it react.</p>
-    <?php if (!$sim_bins): ?>
-      <p class="flash err">No active bins. Add one on the Settings page first.</p>
-    <?php else: ?>
+    <h2>Real bin test (drives the circuit)</h2>
+    <p class="small muted">The ESP32 acts exactly as if its sensors saw a fire or a gas leak: the buzzer or fan
+      switches on, the dashboard shows the hazard and the event is logged, all marked
+      <span class="chip TEST">TEST</span>. Fire tests also send the alert, marked "TEST". The bin picks the
+      command up within about 2 s and the test ends by itself. A real hazard always wins over a test.</p>
+    <div class="row">
+      <label>Bin
+        <select id="tBin">
+          <?php foreach ($sim_bins as $b): ?>
+            <option value="<?= e($b['bin_id']) ?>"><?= e($b['bin_id'] . ' ' . $b['name']) ?></option>
+          <?php endforeach; ?>
+        </select></label>
+      <label>Run for
+        <select id="tSeconds">
+          <option value="15">15 s</option><option value="30" selected>30 s</option><option value="60">60 s</option>
+        </select></label>
+    </div>
+    <p>
+      <button class="btn danger" data-test="FIRE">🔥 Test fire (buzzer ON)</button>
+      <button class="btn warn" data-test="VAPOUR">⚠ Test gas leak (fan ON)</button>
+      <button class="btn" data-test="STOP">■ Stop test</button>
+    </p>
+    <div id="tNote"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Test</th><th>Bin state</th><th>Fan</th><th>Buzzer</th><th>Last reading</th></tr></thead>
+      <tbody><tr id="tLive"><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Virtual bin (no hardware)</h2>
+    <p class="small muted">Sends fake readings to <code>api/ingest.php</code> the same way the ESP32 does.
+      Keep the dashboard open in another tab to watch it react.
+      <b>Use a bin whose ESP32 is switched off</b>, or the fake and real readings mix.</p>
     <div class="row">
       <label>Bin
         <select id="bin">
@@ -75,8 +108,8 @@ require __DIR__ . '/../lib/header.php';
       <thead><tr><th>Time</th><th>Sent</th><th>HTTP</th><th>Reply</th></tr></thead>
       <tbody id="log"><tr class="empty"><td colspan="4">Nothing sent yet</td></tr></tbody>
     </table></div>
-    <?php endif; ?>
   </section>
+  <?php endif; ?>
 </main>
 
 <script>
@@ -165,6 +198,55 @@ document.querySelectorAll('[data-once]').forEach(btn => btn.onclick = () => {
     const r = reading('normal'); r.temp_c = 150; send(r, 'bad value');
   }
 });
+
+// ---------------------------------------------------------------------
+// Real bin test: start / stop, and show what the bin is doing every 2 s
+// ---------------------------------------------------------------------
+function onOff(v) { return v === null ? '–' : (v ? '<span class="chip on">ON</span>' : 'off'); }
+
+document.querySelectorAll('[data-test]').forEach(btn => btn.onclick = async () => {
+  const note = document.getElementById('tNote');
+  const body = new URLSearchParams({ csrf: CSRF, bin_id: document.getElementById('tBin').value,
+                                     mode: btn.dataset.test, seconds: document.getElementById('tSeconds').value });
+  try {
+    const res = await fetch('../api/test_cmd.php', { method: 'POST', body });
+    const text = await res.text();
+    let j = null; try { j = JSON.parse(text); } catch (e) {}
+    if (!j || !j.ok) throw new Error(j ? j.error : text.slice(0, 200));
+    note.className = 'flash ok';
+    note.textContent = j.test
+      ? `${j.test.mode === 'FIRE' ? 'Fire' : 'Gas leak'} test sent: the bin reacts within about 2 s and stops after ${j.test.seconds_left} s.`
+      : 'Test stopped: the bin goes back to normal within about 2 s.';
+  } catch (e) {
+    note.className = 'flash err';
+    note.textContent = 'Could not send the test: ' + e.message;
+  }
+  liveTest();
+});
+
+async function liveTest() {
+  const row = document.getElementById('tLive');
+  if (!row) return;
+  try {
+    const res = await fetch('../api/status.php', { cache: 'no-store' });
+    const j = await res.json();
+    const b = j.bins.find(x => x.bin_id === document.getElementById('tBin').value);
+    if (!b) { row.innerHTML = '<td colspan="5" class="muted">Bin not found</td>'; return; }
+    const test = b.test
+      ? `<span class="chip TEST">TEST</span> ${b.test.mode === 'FIRE' ? 'fire' : 'gas leak'}, ${b.test.seconds_left} s left`
+      : '<span class="muted">none</span>';
+    row.innerHTML = `<td>${test}</td><td><span class="chip ${esc(b.state)}">${esc(b.state)}</span></td>
+      <td>${onOff(b.fan)}</td><td>${onOff(b.buzzer)}</td>
+      <td>${b.offline ? '<span class="chip OFFLINE">Offline</span> ' : ''}${esc(b.seconds_ago === null ? 'never' : b.seconds_ago + ' s ago')}</td>`;
+  } catch (e) {
+    row.innerHTML = '<td colspan="5" class="muted">Server not reachable</td>';
+  }
+}
+if (document.getElementById('tLive')) {
+  document.getElementById('tBin').onchange = liveTest;
+  liveTest();
+  setInterval(liveTest, 2000);
+}
 
 document.getElementById('backfill').onclick = async () => {
   const b = BINS[cur()];

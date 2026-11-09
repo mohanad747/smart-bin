@@ -42,6 +42,10 @@ function timeOnly(dt) { return dt ? dt.slice(11, 19) : ''; }
 
 const LEVEL_COLOR = { ok: '#2e7d32', nearly: '#e08a00', full: '#c62828', unknown: '#7b8794' };
 
+// Purple "TEST" chip for events / bins driven from the Simulator page
+const TEST_CHIP = '<span class="chip TEST">TEST</span>';
+function testChip(e) { return Number(e.is_test) ? ' ' + TEST_CHIP : ''; }
+
 // Text for the priority list
 function etaText(b) {
   switch (b.prediction_status) {
@@ -76,12 +80,12 @@ function drawBanner() {
         : `<button class="btn white" data-ack="${h.id}">Acknowledge</button>`;
       html += `<div class="banner fire ${acked ? 'acked' : ''}">
         <span class="icon">🔥</span>
-        <span class="text"><b>FIRE at ${where}</b><br>Started ${esc(h.started_at)}${ended}
+        <span class="text"><b>FIRE at ${where}</b>${testChip(h)}<br>Started ${esc(h.started_at)}${ended}
           · peak ${num(h.peak_temp_c)} °C</span>
         <span class="call">Call Civil Defence 9999</span>${ackPart}</div>`;
     } else {
       html += `<div class="banner vapour"><span class="icon">⚠</span>
-        <span class="text"><b>Flammable vapour at ${where}</b><br>Since ${esc(timeOnly(h.started_at))}
+        <span class="text"><b>Flammable vapour at ${where}</b>${testChip(h)}<br>Since ${esc(timeOnly(h.started_at))}
           · gas peak ${esc(h.peak_gas_raw)} · fan venting the bin</span></div>`;
     }
   }
@@ -179,6 +183,7 @@ function drawCards() {
         <span class="id">${esc(b.bin_id)}</span><span class="name">${esc(b.name)}</span>
         <span class="chip ${esc(b.state)}">${esc(b.state)}</span>
         ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}
+        ${b.test ? `${TEST_CHIP} <span class="small muted">${b.test.mode === 'FIRE' ? 'fire' : 'gas'} test, ${b.test.seconds_left} s left</span>` : ''}
       </div>
       <div class="small muted">${esc(b.location_text)}</div>
       <div class="fillrow"><span class="fill" style="color:${color}">${num(b.fill_pct, 0)}%</span>
@@ -214,7 +219,7 @@ function drawEvents() {
   const body = el('events');
   if (data.events.length === 0) { body.innerHTML = '<tr class="empty"><td colspan="10">No events yet</td></tr>'; return; }
   body.innerHTML = data.events.map(e => `<tr>
-    <td><span class="chip ${esc(e.type)}">${esc(e.type)}</span></td>
+    <td><span class="chip ${esc(e.type)}">${esc(e.type)}</span>${testChip(e)}</td>
     <td>${esc(e.bin_id)}</td>
     <td>${esc(e.started_at)}</td>
     <td>${e.ended_at ? esc(e.ended_at) : '<b>ongoing</b>'}</td>

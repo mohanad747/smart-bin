@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS bins (
   last_uptime_s         INT UNSIGNED NULL,
   last_fw               VARCHAR(20)  NULL,
   full_alerted          TINYINT(1)   NOT NULL DEFAULT 0,       -- "bin full" message sent this cycle
-  created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+  -- test mode (Simulator page): the real bin acts as if it saw a fire / gas
+  test_mode             ENUM('FIRE','VAPOUR') NULL,              -- NULL = no test running
+  test_until            DATETIME     NULL,
+  test_by               VARCHAR(50)  NULL,
+  created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
@@ -69,6 +73,7 @@ CREATE TABLE IF NOT EXISTS readings (
   uptime_s      INT UNSIGNED NULL,
   rssi          SMALLINT     NULL,
   fw            VARCHAR(20)  NULL,
+  is_test       TINYINT(1)   NOT NULL DEFAULT 0,               -- state caused by a test command
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_bin_time (bin_id, created_at),
   CONSTRAINT fk_readings_bin FOREIGN KEY (bin_id) REFERENCES bins(bin_id)
@@ -92,6 +97,7 @@ CREATE TABLE IF NOT EXISTS events (
   alert_sent       TINYINT(1)   NOT NULL DEFAULT 0,
   acknowledged_by  VARCHAR(50)  NULL,
   acknowledged_at  DATETIME     NULL,
+  is_test          TINYINT(1)   NOT NULL DEFAULT 0,            -- started by a test, not a real hazard
   INDEX idx_bin_open (bin_id, type, ended_at),
   INDEX idx_started (started_at),
   CONSTRAINT fk_events_bin FOREIGN KEY (bin_id) REFERENCES bins(bin_id)

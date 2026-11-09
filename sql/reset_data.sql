@@ -14,4 +14,5 @@ UPDATE bins SET
   prediction_status = 'NO_DATA', state = 'NORMAL', last_seen = NULL,
   last_distance_cm = NULL, last_temp_c = NULL, last_humidity = NULL, last_gas_raw = NULL,
   last_flame = NULL, last_fan = NULL, last_buzzer = NULL, last_rssi = NULL,
-  last_uptime_s = NULL, last_fw = NULL, full_alerted = 0;
+  last_uptime_s = NULL, last_fw = NULL, full_alerted = 0,
+  test_mode = NULL, test_until = NULL, test_by = NULL;

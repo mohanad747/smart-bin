@@ -10,6 +10,7 @@
 // =====================================================================
 
 require __DIR__ . '/../lib/auth.php';
+require __DIR__ . '/../lib/test_mode.php';
 require_login(true);
 
 // ---------------------------------------------------------------------
@@ -73,6 +74,7 @@ foreach ($rows as $r) {
         'rssi'              => $r['last_rssi'] === null ? null : (int)$r['last_rssi'],
         'fw'                => $r['last_fw'],
         'thresholds'        => $th,
+        'test'              => current_test($conn, $r['bin_id']),   // running test or null
     ];
 }
 

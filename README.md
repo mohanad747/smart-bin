@@ -26,15 +26,18 @@ smart_bin/
 │   ├── ingest.php         ESP32 -> server (DFD 1.0 - 4.0)
 │   ├── status.php         dashboard data + priority ranking (DFD 5.0, 6.0)
 │   ├── history.php        chart data (last 6 h)
-│   └── ack.php            acknowledge a fire alert
+│   ├── ack.php            acknowledge a fire alert
+│   ├── test_cmd.php       start/stop a test on the real bin (Simulator page)
+│   └── device_poll.php    ESP32 asks "any test for me?" every 2 s
 ├── tools/
-│   ├── simulator.php      fake bin for testing without hardware
+│   ├── simulator.php      real-bin tests + fake bin for testing without hardware
 │   └── sim_backfill.php
 ├── lib/                   db + helpers, login/CSRF, alerts, PHPMailer (not web-reachable)
 ├── assets/                CSS, dashboard JS, Chart.js 4.4.1, Leaflet 1.9.4 (served locally)
 ├── sql/
 │   ├── schema.sql         tables (D1 bins, D2 readings, D3 events, D4 settings, D5 users, alert_log)
 │   ├── seed.sql           BIN-01 at UTAS Muscat, admin user, default thresholds
+│   ├── migrate_1_1.sql    upgrade a 1.0 database (test mode columns)
 │   └── reset_data.sql     clear readings/events before a demo (keeps bins, settings, users)
 ├── firmware/SmartBin/     ESP32 Arduino sketch
 ├── README.md, TESTING.md
@@ -56,6 +59,7 @@ smart_bin/
    C:\xampp\mysql\bin\mysql.exe -u root -p < C:\xampp\htdocs\smart_bin\sql\seed.sql
    ```
    (Press Enter at the password prompt if your MySQL root has no password.)
+   Already have a 1.0 database? Import `sql/migrate_1_1.sql` instead (adds the test-mode columns).
 4. Copy `config.sample.php` to `config.php` and set the MySQL password in `'db' => ['pass' => ...]`.
 5. Open <http://localhost/smart_bin/> and log in:
    - user **admin**, password **SmartBin@2026**
@@ -72,6 +76,8 @@ smart_bin/
   Ignore `192.168.56.x` (VirtualBox).
 - Or run `ipconfig` and look at the **Wireless LAN adapter Wi-Fi → IPv4 Address**.
 - A phone hotspot can hand out a new IP each time; check again before each demo.
+- **Best for demos: the laptop's own Windows Mobile Hotspot.** On it the laptop is always
+  `192.168.137.1`, so `SERVER_URL` = `http://192.168.137.1/smart_bin/api/ingest.php` never changes.
 
 ### Windows Firewall rule for Apache (Private profile)
 1. Make the hotspot/router network **Private**: Settings → Network & internet → Wi-Fi →
@@ -145,20 +151,45 @@ DHT22 4, relay IN 26 (fan on when LOW), buzzer 25. Change them in `config.h`.
   flash.
 - **Buzzer**: if it sounds when it should be quiet, your module is "low level trigger": set
   `BUZZER_ON_LEVEL` to `LOW` in `config.h`.
+- **MQ-2**: wire **AO** (through the divider) to GPIO34, not DO. The blue knob only changes DO, so
+  it does not change the gas number. Clean air reads about 300–500. Test with one short spray of
+  deodorant / air freshener (butane propellant) about 10 cm away; it should jump to 1000–2500.
+  An empty lighter often gives nothing.
+- **Flame sensor**: DO to GPIO27; turn its knob until the DO-LED is off in normal light and comes
+  on with a flame. A TV remote pointed at it (infrared) also triggers it.
 
 **Hardware notes**
 - The relay is a **5 V** relay module (JQC3F-05VDC). On 3.3 V many of these click weakly or not at
   all. If the fan does not switch, move the relay **VCC to the 5 V rail** (IN stays on GPIO26).
 - The safety logic (fan/buzzer) runs on the ESP32 every second and does not need Wi-Fi. If Wi-Fi
-  is down the unit keeps reacting and retries the connection every 10 s.
+  is down the unit keeps reacting and retries the connection every 15 s.
 - The DHT22 tops out at 80 °C. During a fire the firmware sends at most 80 °C so the server does
   not reject the reading.
 
 ---
 
-## 5. Testing without hardware: the simulator
+## 5. Simulator page: real-bin tests and a virtual bin
 
-**Simulator** (top menu) sends fake readings through the real `api/ingest.php`:
+### Real bin test (drives the circuit)
+Makes the **real ESP32** act as if its sensors saw a fire or a gas leak, so the buzzer / fan work
+in the circuit during a demo without a real fire:
+
+| Button | On the bin | On the dashboard |
+|---|---|---|
+| Test fire | buzzer ON, fan OFF | red FIRE banner marked **TEST**, FIRE event marked TEST, alert sent with "TEST ONLY" |
+| Test gas leak | fan ON, buzzer OFF | amber banner marked **TEST**, VAPOUR event marked TEST |
+| Stop test | back to normal | |
+
+- The command is saved on the bin row; the ESP32 picks it up within **about 2 s**
+  (`api/device_poll.php` between uploads, and every upload reply).
+- The test **ends by itself** after the chosen time (15 / 30 / 60 s, max 120 s), even if Wi-Fi drops.
+- **Real sensors always win**: a real fire during a gas test is a FIRE, and an event the server's own
+  check confirms from the sensor values is never marked as a test.
+- A second fire test within 2 minutes continues the same event, so it does not send a second alert.
+
+### Virtual bin (no hardware)
+Sends fake readings through the real `api/ingest.php`. Use a bin whose ESP32 is switched off,
+otherwise the fake and real readings mix:
 
 | Button | What it does |
 |---|---|
@@ -184,12 +215,14 @@ with `sql/reset_data.sql` (it keeps bins, thresholds and users).
 ```json
 {"bin_id":"BIN-01","token":"device-token-here","distance_cm":42.3,"gas_raw":812,
  "flame":false,"temp_c":31.4,"humidity":40.2,"state":"NORMAL","fan":false,"buzzer":false,
- "uptime_s":1234,"rssi":-61,"fw":"1.0.0"}
+ "uptime_s":1234,"rssi":-61,"fw":"1.1.0","test":false}
 ```
 
 - `distance_cm`, `temp_c`, `humidity` may be `null` (sensor read failed). The reading is saved and
   the dashboard keeps showing the last good value.
-- **200** `{"ok":true,"thresholds":{"gas_raw":1800,"temp_limit_c":60,"temp_rise_c":5,"temp_rise_window_s":60,"upload_interval_s":10}}`
+- `test` (optional): `true` when the state comes from a test command, not the sensors.
+- **200** `{"ok":true,"thresholds":{"gas_raw":1800,"temp_limit_c":60,"temp_rise_c":5,"temp_rise_window_s":60,"upload_interval_s":10},"test":null}`
+  — `test` is `{"mode":"FIRE","seconds_left":23}` while a test is running.
 - **401** `{"ok":false,"error":"invalid token"}`: wrong/missing token. Nothing saved.
 - **400** `{"ok":false,"error":"temp_c out of range (-40 to 80)"}`: ranges: distance 0–400,
   temp −40–80, humidity 0–100, gas 0–4095. Nothing saved.
@@ -205,6 +238,9 @@ What the server does with a reading (DFD processes):
 | 5.0 Rank collection priority | `status.php` | soonest time-to-full first, then highest fill |
 | 6.0 Log in and show dashboard | `login.php`, `index.php` | |
 | 7.0 Manage bins and settings | `settings.php` | |
+
+`POST /smart_bin/api/device_poll.php` with `{"bin_id":"BIN-01","token":"..."}` answers
+`{"ok":true,"test":null}` or the running test (401 for a wrong token). Nothing is saved.
 
 OFFLINE events: a bin is offline after **3 × its upload interval** with no reading. The event is
 opened when the dashboard notices it and closed by the next reading.

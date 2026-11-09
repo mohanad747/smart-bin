@@ -4,7 +4,7 @@
 // =====================================================================
 #pragma once
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.1.0"
 
 // ---------------- pins ----------------
 #define PIN_TRIG     19   // HC-SR04 TRIG (3.3 V pulse is enough)
@@ -27,6 +27,9 @@
 #define HTTP_TIMEOUT_MS    4000     // never wait longer than this for the server
 #define WIFI_RETRY_MS     15000UL   // try to reconnect every 15 s when Wi-Fi is down
 #define MQ2_WARMUP_S         60     // MQ-2 heater warm-up: gas is ignored before this (it reads high)
+#define TEST_POLL_MS       2000UL   // ask the server "any test for me?" this often (Simulator page)
+#define TEST_POLL_TIMEOUT_MS 1500   // the poll is small: give up quickly so the loop never stalls
+#define TEST_MAX_S          120     // a test never runs longer than this, whatever the server says
 
 // Hold times stop the state flickering on the edge of a threshold
 #define FIRE_HOLD_MS      30000UL   // stay in FIRE 30 s after the last fire sign
