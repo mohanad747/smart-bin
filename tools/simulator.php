@@ -29,11 +29,7 @@ require __DIR__ . '/../lib/header.php';
   <section class="panel"><p class="flash err">No active bins. Add one on the Settings page first.</p></section>
   <?php else: ?>
   <section class="panel">
-    <h2>Real bin test (drives the circuit)</h2>
-    <p class="small muted">The ESP32 acts exactly as if its sensors saw a fire or a gas leak: the buzzer or fan
-      switches on, the dashboard shows the hazard and the event is logged, all marked
-      <span class="chip TEST">TEST</span>. Fire tests also send the alert, marked "TEST". The bin picks the
-      command up within about 2 s and the test ends by itself. A real hazard always wins over a test.</p>
+    <h2>Real bin test</h2>
     <div class="row">
       <label>Bin
         <select id="tBin">
@@ -47,8 +43,8 @@ require __DIR__ . '/../lib/header.php';
         </select></label>
     </div>
     <p>
-      <button class="btn danger" data-test="FIRE">🔥 Test fire (buzzer ON)</button>
-      <button class="btn warn" data-test="VAPOUR">⚠ Test gas leak (fan ON)</button>
+      <button class="btn danger" data-test="FIRE">🔥 Test fire</button>
+      <button class="btn warn" data-test="VAPOUR">⚠ Test gas leak</button>
       <button class="btn" data-test="STOP">■ Stop test</button>
     </p>
     <div id="tNote"></div>
@@ -59,10 +55,8 @@ require __DIR__ . '/../lib/header.php';
   </section>
 
   <section class="panel">
-    <h2>Virtual bin (no hardware)</h2>
-    <p class="small muted">Sends fake readings to <code>api/ingest.php</code> the same way the ESP32 does.
-      Keep the dashboard open in another tab to watch it react.
-      <b>Use a bin whose ESP32 is switched off</b>, or the fake and real readings mix.</p>
+    <h2>Virtual bin</h2>
+    <p class="small muted">Use only when the ESP32 is switched off.</p>
     <div class="row">
       <label>Bin
         <select id="bin">
@@ -74,30 +68,28 @@ require __DIR__ . '/../lib/header.php';
         <select id="every">
           <option value="2">2 s</option><option value="5" selected>5 s</option><option value="10">10 s</option>
         </select></label>
-      <label>Filling speed (per reading)
+      <label>Filling speed
         <select id="step">
           <option value="0.3">+0.3 %</option><option value="1" selected>+1 %</option><option value="3">+3 %</option>
         </select></label>
     </div>
 
-    <h3 class="small muted">Scenario (keeps sending until you press Stop)</h3>
+    <h3 class="small muted">Scenario</h3>
     <p>
       <button class="btn primary" data-mode="normal">Normal</button>
       <button class="btn primary" data-mode="filling">Filling up</button>
-      <button class="btn warn" data-mode="gas">Gas leak (VAPOUR)</button>
+      <button class="btn warn" data-mode="gas">Gas leak</button>
       <button class="btn danger" data-mode="fire">Fire</button>
-      <button class="btn" data-mode="fail">Sensor failure (nulls)</button>
+      <button class="btn" data-mode="fail">Sensor failure</button>
       <button class="btn" id="stop">■ Stop</button>
     </p>
     <h3 class="small muted">One-shot</h3>
     <p>
       <button class="btn" data-once="emptied">Bin emptied</button>
-      <button class="btn" data-once="badtoken">Wrong token (expect 401)</button>
-      <button class="btn" data-once="badvalue">Bad value: 150 °C (expect 400)</button>
+      <button class="btn" data-once="badtoken">Wrong token</button>
+      <button class="btn" data-once="badvalue">Bad value (150 °C)</button>
       <button class="btn" id="backfill">Add 1 h of filling history</button>
     </p>
-    <p class="small muted">"Add 1 h of filling history" writes past readings straight into the database,
-      so the time-to-full prediction appears right away instead of after 10 minutes.</p>
     <div id="backfillNote"></div>
 
     <div class="panel-head" style="margin-top:14px">
@@ -187,11 +179,12 @@ document.getElementById('stop').onclick = () => {
 };
 document.getElementById('every').onchange = () => { if (mode) start(mode); };
 
-document.querySelectorAll('[data-once]').forEach(btn => btn.onclick = () => {
+document.querySelectorAll('[data-once]').forEach(btn => btn.onclick = async () => {
   const kind = btn.dataset.once;
   if (kind === 'emptied') {
+    // the server only believes an emptying after 3 low readings in a row
     sim[cur()].fill = 5;
-    send(reading('normal'), 'emptied');
+    for (let i = 0; i < 3; i++) await send(reading('normal'), 'emptied ' + (i + 1) + '/3');
   } else if (kind === 'badtoken') {
     const r = reading('normal'); r.token = 'wrong-token'; send(r, 'wrong token');
   } else if (kind === 'badvalue') {

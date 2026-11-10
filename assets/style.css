@@ -89,7 +89,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .priority .pct { font-weight: 700; font-size: 18px; }
 
 /* ---------- bin cards ---------- */
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .card {
   border: 2px solid var(--line); border-radius: var(--radius); padding: 14px; cursor: pointer;
   background: #fff;
@@ -101,7 +101,59 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .card .head .id { font-weight: 700; font-size: 17px; }
 .card .head .name { color: var(--muted); font-size: 13px; flex: 1; }
 .card .fillrow { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 4px; }
-.card .fill { font-size: 34px; font-weight: 700; }
+.card .fill { font-size: 40px; font-weight: 700; line-height: 1; }
+.card .fill .unit { font-size: 20px; margin-left: 2px; }
+.cardbody { display: flex; align-items: center; gap: 16px; margin: 12px 0 10px; }
+.binpic { width: 84px; height: 105px; flex: none; }
+.binpic rect { transition: y .6s, height .6s; }
+.fillinfo { display: grid; gap: 5px; min-width: 0; }
+.fillinfo .eta { font-weight: 600; }
+
+/* gas gauge: bar = reading, black mark = vapour threshold */
+.gauge { background: #f6f8fa; border-radius: 6px; padding: 7px 9px 9px; }
+.gauge-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.gauge-head .k { font-size: 12px; color: var(--muted); }
+.gauge-bar { position: relative; height: 10px; background: #e1e6ea; border-radius: 5px; }
+.gauge-bar div { height: 100%; border-radius: 5px; transition: width .6s; }
+.gauge-bar i { position: absolute; top: -3px; bottom: -3px; width: 3px; margin-left: -1px;
+               background: var(--ink); border-radius: 2px; }
+
+/* Wi-Fi bars */
+.wifi { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; vertical-align: middle; }
+.wifi i { width: 4px; background: #cdd5dc; border-radius: 1px; }
+.wifi i.on { background: var(--accent); }
+
+/* 1 or 2 bins: cards in a column on the left, charts on the right */
+#mid { margin-top: 16px; }
+#mid.few { display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 16px; align-items: stretch; }
+#mid.few > .panel { margin-bottom: 16px; }
+#mid.few .cards { grid-template-columns: 1fr; grid-auto-rows: 1fr; flex: 1; }
+/* the card fills the whole Bins panel, so its coloured edge ends where the charts panel ends */
+#mid.few > .panel:first-child { display: flex; flex-direction: column; }
+#mid.few .card { display: flex; flex-direction: column; }
+#mid.few .cardbody { flex: 1; gap: 22px; }
+#mid.few .binpic { width: 130px; height: 162px; }
+#mid.few .card .fill { font-size: 52px; }
+#mid.few .card .fill .unit { font-size: 24px; }
+#mid.few .charts { grid-template-columns: minmax(0, 1fr); }   /* temperature under fill level */
+#mid.few .chart-box { height: 220px; }
+#mid.few .status-line { flex-basis: 100%; margin-left: 0; }
+
+/* ---------- summary tiles ---------- */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 6px 0 16px; }
+.tile {
+  background: var(--panel); border-radius: var(--radius); padding: 12px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); border-left: 5px solid var(--accent);
+}
+.tile.ok { border-left-color: var(--ok); }
+.tile.nearly { border-left-color: var(--nearly); }
+.tile.full, .tile.fire { border-left-color: var(--fire); }
+.tile.off { border-left-color: var(--offline); }
+.tile .k { font-size: 13px; color: var(--muted); }
+.tile .v { font-size: 30px; font-weight: 700; line-height: 1.15; }
+.tile .v .of { font-size: 16px; font-weight: 600; color: var(--muted); }
+.tile .s { font-size: 13px; color: var(--muted); }
+.tile.fire .v, .tile.full .v { color: var(--fire); }
 .bar { height: 14px; background: #e6eaee; border-radius: 7px; overflow: hidden; }
 .bar div { height: 100%; transition: width .6s; }
 .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
@@ -122,7 +174,8 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .chip.TEST { background: #6a1b9a; }   /* started from the Simulator page, not a real hazard */
 
 /* ---------- charts ---------- */
-.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.charts > div { min-width: 0; }   /* lets the chart shrink instead of widening the page */
 .chart-box { position: relative; height: 240px; }
 
 /* ---------- tables ---------- */
@@ -181,7 +234,8 @@ details summary { cursor: pointer; font-weight: 600; }
 
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
-  .grid-top, .charts { grid-template-columns: 1fr; }
+  .grid-top, .charts, #mid.few { grid-template-columns: 1fr; }
+  .tiles { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   #map { height: 300px; }
 }
 @media (max-width: 480px) {

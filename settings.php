@@ -219,8 +219,6 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
   <!-- ============ ESP32 connection ============ -->
   <section class="panel" id="connect">
     <h2>ESP32 connection</h2>
-    <p class="small muted">The phone hotspot can give the laptop a new IP. Check here and update
-      <code>SERVER_URL</code> in the firmware's <code>secrets.h</code> if it changed.</p>
     <?php if (!$ips): ?>
       <p class="flash err">No LAN address found. Is the laptop connected to Wi-Fi / the hotspot?</p>
     <?php else: ?>
@@ -228,12 +226,10 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
         <tr><th>Laptop IP</th><th>Ingest URL for the ESP32</th></tr>
         <?php foreach ($ips as $ip): ?>
           <tr><td><code><?= e($ip) ?></code>
-                <?= strpos($ip, '192.168.56.') === 0 ? '<span class="small muted">(VirtualBox adapter, not this one)</span>' : '' ?></td>
+                <?= strpos($ip, '192.168.56.') === 0 ? '<span class="small muted">(VirtualBox)</span>' : '' ?></td>
               <td><code>http://<?= e($ip . $app_path) ?></code></td></tr>
         <?php endforeach; ?>
       </table>
-      <p class="small muted">Several IPs? Use the one on the same network as the ESP32
-        (phone hotspots often use 192.168.x.x or 172.20.10.x).</p>
     <?php endif; ?>
   </section>
 
@@ -255,9 +251,9 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
           <div class="row">
             <?= num_box('lat', 'Latitude', $b['lat']) ?>
             <?= num_box('lng', 'Longitude', $b['lng']) ?>
-            <?= num_box('empty_depth_cm', 'Empty depth (cm): sensor to bottom', $b['empty_depth_cm'], '', '0.1') ?>
+            <?= num_box('empty_depth_cm', 'Empty depth (cm)', $b['empty_depth_cm'], '', '0.1') ?>
           </div>
-          <label><input type="checkbox" name="active" <?= $b['active'] ? 'checked' : '' ?>>Active (shown on the dashboard, accepts readings)</label>
+          <label><input type="checkbox" name="active" <?= $b['active'] ? 'checked' : '' ?>>Active</label>
           <button class="btn primary">Save bin</button>
         </form>
         <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
@@ -286,8 +282,6 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
           <?= num_box('lng', 'Longitude', '', '58.4300') ?>
           <?= num_box('empty_depth_cm', 'Empty depth (cm)', '40', '', '0.1') ?>
         </div>
-        <p class="small muted">Tip: right-click a spot in Google Maps to copy its latitude, longitude.
-          A device token is generated for you.</p>
         <button class="btn primary">Add bin</button>
       </form>
     </details>
@@ -296,8 +290,7 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
   <!-- ============ Thresholds ============ -->
   <section class="panel" id="thresholds">
     <h2>Thresholds</h2>
-    <p class="small muted">The defaults apply to every bin. A bin row overrides only the boxes you fill in;
-      leave a box empty to use the default. The bin receives the new values in its next upload reply.</p>
+    <p class="small muted">Empty box = use the default.</p>
     <?php
     $def  = $settings['DEFAULT'] ?? [];
     $rows = array_merge([['bin_id' => 'DEFAULT', 'name' => 'Defaults for all bins']], $bins);
@@ -333,9 +326,6 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
   <!-- ============ Alerts ============ -->
   <section class="panel" id="alerts">
     <h2>Urgent alerts</h2>
-    <p class="small muted">Channels are set in <code>config.php</code>. One alert is sent per FIRE event.
-      Vapour is shown on the dashboard only.
-      "Bin full" messages: <b><?= !empty($CONFIG['alerts']['notify_full']) ? 'on' : 'off' ?></b>.</p>
     <table>
       <tr><th>Channel</th><th>Status</th><th>Recipients</th></tr>
       <tr><td>Email (Gmail SMTP)</td>
@@ -349,7 +339,6 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="test_alert">
       <button class="btn warn">Send test alert</button>
-      <span class="small muted">Sends a test message on every enabled channel (may take a few seconds).</span>
     </form>
 
     <h3 style="margin-top:18px" class="small muted">Last alert attempts</h3>

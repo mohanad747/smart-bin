@@ -169,12 +169,84 @@ function drawPriority() {
   list.querySelectorAll('li[data-bin]').forEach(li => li.onclick = () => select(li.dataset.bin, true));
 }
 
+// ---------- summary tiles ----------
+function drawTiles() {
+  const bins = data.bins, total = bins.length;
+  const offline = bins.filter(b => b.offline);
+  const full    = bins.filter(b => b.level === 'full');
+  const nearly  = bins.filter(b => b.level === 'nearly');
+  const fire    = bins.filter(b => b.state === 'FIRE');
+  const vapour  = bins.filter(b => b.state === 'VAPOUR');
+  const fills   = bins.filter(b => b.fill_pct !== null);
+  const avg     = fills.length ? fills.reduce((s, b) => s + b.fill_pct, 0) / fills.length : null;
+  const top     = fills.slice().sort((a, b) => b.fill_pct - a.fill_pct)[0];
+  const ids     = list => list.map(b => esc(b.bin_id)).join(', ');
+
+  const tile = (cls, label, value, sub) => `<div class="tile ${cls}">
+      <div class="k">${label}</div><div class="v">${value}</div><div class="s">${sub}</div></div>`;
+
+  const hazards = fire.length + vapour.length;
+  const collect = full.length + nearly.length;
+  el('tiles').innerHTML =
+    tile(offline.length ? 'off' : 'ok', 'Bins online', `${total - offline.length}<span class="of"> / ${total}</span>`,
+         offline.length ? 'Offline: ' + ids(offline) : 'All bins reporting') +
+    tile(full.length ? 'full' : nearly.length ? 'nearly' : 'ok', 'Need collection', collect,
+         collect ? [full.length ? full.length + ' full' : '', nearly.length ? nearly.length + ' nearly full' : '']
+                     .filter(Boolean).join(', ')
+                 : 'No bin is nearly full') +
+    tile(fire.length ? 'fire' : vapour.length ? 'nearly' : 'ok', 'Active hazards', hazards,
+         hazards ? [fire.length ? 'Fire: ' + ids(fire) : '', vapour.length ? 'Vapour: ' + ids(vapour) : '']
+                     .filter(Boolean).join(' · ')
+                 : 'No fire or vapour') +
+    tile('info', 'Average fill', avg === null ? '–' : Math.round(avg) + '<span class="of"> %</span>',
+         top ? `Highest: ${esc(top.bin_id)} at ${Math.round(top.fill_pct)}%` : 'No fill data yet');
+}
+
 // ---------- bin cards ----------
 function onOff(v) { return v === null ? '–' : (v ? '<span class="chip on">ON</span>' : 'off'); }
 
+// Small picture of a bin, filled to the fill %
+function binPicture(b, n) {
+  const pct = b.fill_pct === null ? 0 : Math.max(0, Math.min(100, b.fill_pct));
+  const h = 72 * pct / 100;                       // inside height of the bin body is 72
+  const body = 'M13 24 L67 24 L61 96 L19 96 Z';
+  return `<svg class="binpic" viewBox="0 0 80 100" role="img" aria-label="Fill ${Math.round(pct)}%">
+    <defs><clipPath id="binclip${n}"><path d="${body}"/></clipPath></defs>
+    <path d="${body}" fill="#eef1f4"/>
+    <rect x="0" y="${96 - h}" width="80" height="${h}" fill="${LEVEL_COLOR[b.level]}" clip-path="url(#binclip${n})"/>
+    <path d="${body}" fill="none" stroke="#9aa5b1" stroke-width="2.5" stroke-linejoin="round"/>
+    <rect x="8" y="14" width="64" height="8" rx="3" fill="#9aa5b1"/>
+    <rect x="32" y="7" width="16" height="7" rx="3" fill="#9aa5b1"/>
+  </svg>`;
+}
+
+// Gas reading against its threshold: the mark shows where VAPOUR starts
+function gasGauge(b) {
+  const limit = b.thresholds.gas_raw;
+  const scale = Math.min(4095, limit * 1.5);
+  const gas   = b.gas_raw;
+  const width = gas === null ? 0 : Math.min(100, gas / scale * 100);
+  const color = gas === null ? '#9aa5b1' : gas >= limit ? 'var(--fire)' : gas >= limit * 0.7 ? 'var(--nearly)' : 'var(--ok)';
+  return `<div class="gauge">
+      <div class="gauge-head"><span class="k">Gas (raw)</span>
+        <span><b>${gas ?? '–'}</b> <span class="small muted">/ limit ${limit}</span></span></div>
+      <div class="gauge-bar"><div style="width:${width}%;background:${color}"></div>
+        <i style="left:${limit / scale * 100}%" title="Vapour threshold ${limit}"></i></div>
+    </div>`;
+}
+
+// Wi-Fi strength as 4 bars (from the RSSI the bin reports)
+function wifiBars(rssi) {
+  const level = rssi === null ? 0 : rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+  let bars = '';
+  for (let i = 1; i <= 4; i++) bars += `<i class="${i <= level ? 'on' : ''}" style="height:${3 + i * 3}px"></i>`;
+  return `<span class="wifi" title="${rssi === null ? 'No signal data' : rssi + ' dBm'}">${bars}</span>`;
+}
+
 function drawCards() {
   const box = el('cards');
-  box.innerHTML = data.bins.map(b => {
+  el('mid').classList.toggle('few', data.bins.length <= 2);   // few bins: cards beside the charts
+  box.innerHTML = data.bins.map((b, n) => {
     const color = LEVEL_COLOR[b.level];
     const stateCls = b.state === 'FIRE' ? 'fire' : b.state === 'VAPOUR' ? 'vapour' : '';
     const levelText = { ok: 'OK', nearly: 'Nearly full', full: 'Full', unknown: 'No fill data' }[b.level];
@@ -186,22 +258,25 @@ function drawCards() {
         ${b.test ? `${TEST_CHIP} <span class="small muted">${b.test.mode === 'FIRE' ? 'fire' : 'gas'} test, ${b.test.seconds_left} s left</span>` : ''}
       </div>
       <div class="small muted">${esc(b.location_text)}</div>
-      <div class="fillrow"><span class="fill" style="color:${color}">${num(b.fill_pct, 0)}%</span>
-        <span class="chip ${esc(b.level)}">${levelText}</span>
-        <span class="small muted" style="margin-left:auto">${esc(etaText(b))}</span></div>
-      <div class="bar"><div style="width:${b.fill_pct ?? 0}%;background:${color}"></div></div>
+      <div class="cardbody">
+        ${binPicture(b, n)}
+        <div class="fillinfo">
+          <div class="fill" style="color:${color}">${num(b.fill_pct, 0)}<span class="unit">%</span></div>
+          <div><span class="chip ${esc(b.level)}">${levelText}</span></div>
+          <div class="eta">${esc(etaText(b))}</div>
+          <div class="small muted">Fill rate: ${b.fill_rate === null ? '–' : num(b.fill_rate, 1) + ' %/h'}</div>
+        </div>
+      </div>
+      ${gasGauge(b)}
       <div class="metrics">
         <div class="metric"><div class="k">Temperature</div><div class="v">${num(b.temp_c)} °C</div></div>
         <div class="metric"><div class="k">Humidity</div><div class="v">${num(b.humidity, 0)} %</div></div>
-        <div class="metric"><div class="k">Gas (raw)</div><div class="v">${b.gas_raw ?? '–'}
-          <span class="small muted">/ ${b.thresholds.gas_raw}</span></div></div>
+        <div class="metric"><div class="k">Wi-Fi</div><div class="v">${wifiBars(b.rssi)}</div></div>
         <div class="metric"><div class="k">Fan</div><div class="v">${onOff(b.fan)}</div></div>
         <div class="metric"><div class="k">Buzzer</div><div class="v">${onOff(b.buzzer)}</div></div>
         <div class="metric"><div class="k">Last seen</div><div class="v">${esc(ago(b.seconds_ago))}</div></div>
       </div>
-      <div class="small muted" style="margin-top:8px">
-        Fill rate: ${b.fill_rate === null ? '–' : num(b.fill_rate, 1) + ' %/h'}
-        · Wi-Fi ${b.rssi ?? '–'} dBm · fw ${esc(b.fw ?? '–')}</div>
+      <div class="small muted" style="margin-top:8px">Firmware ${esc(b.fw ?? '–')}</div>
     </div>`;
   }).join('') || '<p class="muted">No active bins. Add one on the Settings page.</p>';
   box.querySelectorAll('.card').forEach(c => c.onclick = () => select(c.dataset.bin, false));
@@ -246,7 +321,9 @@ function makeChart(canvas, label, color, yMin, yMax) {
     data: { labels: [], datasets: [{ label, data: [], borderColor: color, backgroundColor: color + '22',
             fill: true, tension: .25, pointRadius: 0, spanGaps: true }] },
     options: { animation: false, maintainAspectRatio: false, plugins: { legend: { display: false } },
-               scales: { y: { min: yMin, max: yMax }, x: { ticks: { maxTicksLimit: 8 } } } }
+               // same y-axis width on both charts, so their plot areas and time axes line up exactly
+               scales: { y: { min: yMin, max: yMax, afterFit: axis => { axis.width = 46; } },
+                         x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } } } }
   });
 }
 
@@ -289,7 +366,7 @@ async function poll() {
     if (!selected || !data.bins.some(b => b.bin_id === selected)) {
       if (data.bins.length) select(data.bins[0].bin_id, false);
     }
-    drawBanner(); drawMap(); drawPriority(); drawCards(); drawEvents(); fillFilter();
+    drawBanner(); drawTiles(); drawMap(); drawPriority(); drawCards(); drawEvents(); fillFilter();
     el('chartBin').textContent = selected ?? '-';
     line.className = 'right status-line';
     line.textContent = 'Live · updated ' + data.now.slice(11) + ' · every 5 s';
@@ -306,6 +383,6 @@ if (typeof Chart !== 'undefined') {
   tempChart = makeChart(el('tempChart'), 'Temperature °C', '#d97706', undefined, undefined);
 }
 el('eventFilter').onchange = poll;
-poll();
+poll().then(loadHistory);   // charts at once, also when the bin was remembered from last time
 setInterval(poll, POLL_MS);
 setInterval(loadHistory, HISTORY_MS);

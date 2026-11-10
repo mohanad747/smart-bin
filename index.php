@@ -17,6 +17,9 @@ require __DIR__ . '/lib/header.php';
   <!-- Hazard banner: red FIRE / amber VAPOUR / calm green line -->
   <div id="banner"><div class="banner calm">Loading…</div></div>
 
+  <!-- Summary tiles: the whole system in four numbers -->
+  <section id="tiles" class="tiles"></section>
+
   <section class="grid-top">
     <div class="panel">
       <div class="panel-head">
@@ -39,7 +42,9 @@ require __DIR__ . '/lib/header.php';
     </div>
   </section>
 
-  <section class="panel" style="margin-top:16px">
+  <!-- With 1 or 2 bins the cards sit beside the charts (class "few", set by dashboard.js) -->
+  <div id="mid">
+  <section class="panel">
     <div class="panel-head">
       <h2>Bins</h2>
       <span class="right status-line" id="statusLine">Connecting…</span>
@@ -55,6 +60,7 @@ require __DIR__ . '/lib/header.php';
       <div><h3 class="small muted">Temperature (°C)</h3><div class="chart-box"><canvas id="tempChart"></canvas></div></div>
     </div>
   </section>
+  </div>
 
   <section class="panel">
     <div class="panel-head">
@@ -77,6 +83,6 @@ require __DIR__ . '/lib/header.php';
 
 <script src="assets/chart.umd.min.js"></script>
 <script src="assets/leaflet/leaflet.js"></script>
-<script src="assets/dashboard.js"></script>
+<script src="assets/dashboard.js?v=<?= filemtime(__DIR__ . '/assets/dashboard.js') ?>"></script>
 </body>
 </html>

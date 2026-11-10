@@ -26,7 +26,8 @@ require __DIR__ . '/../lib/test_mode.php';
 
 const MQ2_WARMUP_S  = 60;   // MQ-2 reads high while its heater warms up: ignore gas before this
 const MERGE_GAP_S   = 120;  // a hazard that comes back within 2 min continues the same event
-const EMPTIED_DROP  = 30;   // fill falling by 30 points or more = the bin was emptied
+const EMPTIED_DROP  = 30;   // fill falling by 30 points or more = the bin was emptied ...
+const EMPTIED_CONFIRM = 3;  // ... if it stays down for 3 readings in a row (about 30 s)
 const MIN_POINTS    = 5;    // prediction needs at least 5 readings ...
 const MIN_SPAN_S    = 600;  // ... spread over at least 10 minutes
 const MIN_RATE      = 0.1;  // % per hour; slower than this counts as "not filling" (noise)
@@ -231,12 +232,36 @@ if ($bin_state !== 'NORMAL') {
     }
 }
 
-// EMPTIED: the fill dropped by 30 points or more since the last reading
-if ($prev_fill !== null && $fill !== null && $prev_fill - $fill >= EMPTIED_DROP) {
-    $note = 'Fill ' . round($prev_fill) . '% -> ' . round($fill) . '%';
-    db_exec($conn,
-        "INSERT INTO events (bin_id, type, started_at, ended_at, note)
-         VALUES (?, 'EMPTIED', NOW(), NOW(), ?)", 'ss', [$bin_id, $note]);
+// EMPTIED: the fill dropped by 30 points or more AND stayed down for
+// EMPTIED_CONFIRM readings in a row. One odd echo (a hand, a moving bag,
+// the lid opening) is not an emptying, so a single low reading is ignored.
+if ($fill !== null) {
+    $last = db_all($conn,
+        'SELECT fill_pct, created_at FROM readings
+         WHERE bin_id = ? AND fill_pct IS NOT NULL
+         ORDER BY created_at DESC, id DESC LIMIT ' . (2 * EMPTIED_CONFIRM),
+        's', [$bin_id]);
+    if (count($last) === 2 * EMPTIED_CONFIRM) {
+        $new = array_slice($last, 0, EMPTIED_CONFIRM);        // newest readings (this one included)
+        $old = array_slice($last, EMPTIED_CONFIRM);           // the readings just before them
+        $old_fills = array_map(fn($r) => (float)$r['fill_pct'], $old);
+        sort($old_fills);
+        $before = $old_fills[intdiv(EMPTIED_CONFIRM, 2)];     // median: the level before the drop
+        $after  = max(array_map(fn($r) => (float)$r['fill_pct'], $new));   // ALL new ones are below this
+        $first_low = $new[EMPTIED_CONFIRM - 1]['created_at'];
+        if ($before - $after >= EMPTIED_DROP) {
+            // only once per emptying: not if it was already logged for these readings
+            $done = db_one($conn,
+                "SELECT id FROM events WHERE bin_id = ? AND type = 'EMPTIED' AND started_at >= ?",
+                'ss', [$bin_id, $old[EMPTIED_CONFIRM - 1]['created_at']]);
+            if ($done === null) {
+                $note = 'Fill ' . round($before) . '% -> ' . round($after) . '%';
+                db_exec($conn,
+                    "INSERT INTO events (bin_id, type, started_at, ended_at, note)
+                     VALUES (?, 'EMPTIED', ?, ?, ?)", 'ssss', [$bin_id, $first_low, $first_low, $note]);
+            }
+        }
+    }
 }
 
 // Optional "bin full" message, once per fill cycle

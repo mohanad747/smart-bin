@@ -198,7 +198,7 @@ otherwise the fake and real readings mix:
 | Gas leak | gas above the threshold, state VAPOUR, fan on |
 | Fire | flame + rising temperature, state FIRE, buzzer on → one alert |
 | Sensor failure | distance, temperature and humidity are `null` |
-| Bin emptied | fill drops to 5 % → EMPTIED event |
+| Bin emptied | sends 3 readings at 5 % → EMPTIED event (the server needs 3 low readings in a row) |
 | Wrong token | expect HTTP 401, nothing saved |
 | Bad value | 150 °C, expect HTTP 400, nothing saved |
 | Add 1 h of filling history | writes past readings so the prediction shows at once (test tool only) |
@@ -232,7 +232,7 @@ What the server does with a reading (DFD processes):
 | DFD | Where | What |
 |---|---|---|
 | 1.0 Receive and validate | `ingest.php` | token check, range check, fill % |
-| 2.0 Detect hazard | `ingest.php` | trusts the ESP32 state but re-checks the thresholds; if the server's check is more severe, that state is used. Opens/closes VAPOUR & FIRE events with peak values; EMPTIED when fill drops ≥ 30 points |
+| 2.0 Detect hazard | `ingest.php` | trusts the ESP32 state but re-checks the thresholds; if the server's check is more severe, that state is used. Opens/closes VAPOUR & FIRE events with peak values; EMPTIED when fill drops ≥ 30 points and stays down for 3 readings in a row (one odd echo is ignored) |
 | 3.0 Send urgent alert | `lib/alerts.php` | one alert per new FIRE event, after replying |
 | 4.0 Predict time-to-full | `ingest.php` | straight-line fit of fill % over time since the last EMPTIED; needs ≥ 5 readings over ≥ 10 min, else "Not enough data"; rate ≤ 0.1 %/h = "Not filling" |
 | 5.0 Rank collection priority | `status.php` | soonest time-to-full first, then highest fill |

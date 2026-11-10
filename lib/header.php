@@ -9,7 +9,7 @@ $base   = app_url('');
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($page_title ?? 'Smart Bin') ?></title>
-<link rel="stylesheet" href="<?= e($base) ?>assets/style.css">
+<link rel="stylesheet" href="<?= e($base) ?>assets/style.css?v=<?= filemtime(__DIR__ . '/../assets/style.css') ?>">
 <?= $extra_head ?? '' ?>
 </head>
 <body>
