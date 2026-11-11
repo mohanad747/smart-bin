@@ -66,8 +66,8 @@ smart_bin/
 5. Open <http://localhost/smart_bin/> and log in:
    - user **admin**, password **SmartBin@2026**
    - change it at once: **Settings → Change password**.
-6. `seed.sql` is public in this repo, so its BIN-01 token is too. Press **Settings → Bins →
-   BIN-01 → Generate new token** and put the new token in the ESP32's `secrets.h`.
+6. `seed.sql` gives BIN-01 a random token. Copy it from **Settings → Bins → BIN-01** into the
+   ESP32's `secrets.h`.
 
 ---
 

@@ -3,9 +3,8 @@
 -- Import AFTER schema.sql. Running it again does not create duplicates.
 --
 -- Default login:  admin / SmartBin@2026   (change it on the Settings page)
--- BIN-01 token:   afda09df27a02bdb9b94608761c7c7d4
---                 (put the same token in firmware/SmartBin/secrets.h,
---                  or generate a new one on the Settings page)
+-- BIN-01 token:   a random one is made on import. Copy it from
+--                 Settings > Bins > BIN-01 into firmware/SmartBin/secrets.h
 -- =====================================================================
 USE smart_bin;
 
@@ -21,7 +20,7 @@ INSERT INTO bins (bin_id, name, location_text, lat, lng, device_token, empty_dep
 VALUES ('BIN-01', 'Prototype bin',
         'UTAS Muscat campus, South Al Khuwair, Muscat',
         23.577815, 58.430020,
-        'afda09df27a02bdb9b94608761c7c7d4', 40.0)
+        SUBSTRING(SHA2(CONCAT(UUID(), RAND()), 256), 1, 32), 40.0)   -- random token
 ON DUPLICATE KEY UPDATE bin_id = bin_id;
 
 -- BIN-01 uses the defaults for now (NULL = use DEFAULT row)
