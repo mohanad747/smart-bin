@@ -243,14 +243,33 @@ function wifiBars(rssi) {
   return `<span class="wifi" title="${rssi === null ? 'No signal data' : rssi + ' dBm'}">${bars}</span>`;
 }
 
+// Closed bin: one compact row (id, name, small fill bar, state)
+function binRow(b, stateCls) {
+  const color = LEVEL_COLOR[b.level];
+  return `<div class="card mini ${stateCls}" id="card-${esc(b.bin_id)}" data-bin="${esc(b.bin_id)}" title="Show ${esc(b.bin_id)}">
+      <span class="id">${esc(b.bin_id)}</span>
+      <span class="name">${esc(b.name)}</span>
+      <span class="minibar"><i style="width:${b.fill_pct ?? 0}%;background:${color}"></i></span>
+      <span class="pct" style="color:${color}">${num(b.fill_pct, 0)}%</span>
+      <span class="chips">
+        ${b.state !== 'NORMAL' ? `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>` : ''}
+        ${b.test ? TEST_CHIP : ''}
+        ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}
+      </span>
+      <span class="chev">▸</span>
+    </div>`;
+}
+
+// Bins as an accordion: the selected bin is open (and shown in the charts),
+// every other bin is a compact row. Click a row to open it.
 function drawCards() {
   const box = el('cards');
-  el('mid').classList.toggle('few', data.bins.length <= 2);   // few bins: cards beside the charts
   box.innerHTML = data.bins.map((b, n) => {
     const color = LEVEL_COLOR[b.level];
     const stateCls = b.state === 'FIRE' ? 'fire' : b.state === 'VAPOUR' ? 'vapour' : '';
+    if (b.bin_id !== selected) return binRow(b, stateCls);
     const levelText = { ok: 'OK', nearly: 'Nearly full', full: 'Full', unknown: 'No fill data' }[b.level];
-    return `<div class="card ${stateCls} ${b.bin_id === selected ? 'sel' : ''}" id="card-${esc(b.bin_id)}" data-bin="${esc(b.bin_id)}">
+    return `<div class="card open ${stateCls}" id="card-${esc(b.bin_id)}" data-bin="${esc(b.bin_id)}">
       <div class="head">
         <span class="id">${esc(b.bin_id)}</span><span class="name">${esc(b.name)}</span>
         <span class="chip ${esc(b.state)}">${esc(b.state)}</span>
@@ -279,7 +298,7 @@ function drawCards() {
       <div class="small muted" style="margin-top:8px">Firmware ${esc(b.fw ?? '–')}</div>
     </div>`;
   }).join('') || '<p class="muted">No active bins. Add one on the Settings page.</p>';
-  box.querySelectorAll('.card').forEach(c => c.onclick = () => select(c.dataset.bin, false));
+  box.querySelectorAll('.card.mini').forEach(c => c.onclick = () => select(c.dataset.bin, false));
 }
 
 // ---------- event log ----------
@@ -329,10 +348,14 @@ function makeChart(canvas, label, color, yMin, yMax) {
 
 async function loadHistory() {
   if (!selected || typeof Chart === 'undefined') return;
+  const bin = selected;
   try {
-    const res = await fetch('api/history.php?hours=6&bin_id=' + encodeURIComponent(selected));
+    const res = await fetch('api/history.php?hours=6&bin_id=' + encodeURIComponent(bin));
     const h = await res.json();
-    if (!h.ok) return;
+    if (!h.ok || bin !== selected) return;          // another bin was opened meanwhile
+    const empty = !h.points.some(p => p.fill !== null || p.temp !== null);
+    el('chartEmpty').textContent = empty ? `No readings from ${bin} in the last 6 hours` : '';
+    el('chartEmpty').hidden = !empty;
     const labels = h.points.map(p => p.t.slice(11));
     fillChart.data.labels = labels; fillChart.data.datasets[0].data = h.points.map(p => p.fill);
     tempChart.data.labels = labels; tempChart.data.datasets[0].data = h.points.map(p => p.temp);
@@ -353,6 +376,21 @@ function select(binId, scroll) {
   loadHistory();
 }
 
+// A bin that has JUST gone into FIRE or VAPOUR opens by itself (fire first),
+// so a hazard is never hidden in a closed row. Only on the change, so the
+// operator can still open another bin while the hazard goes on.
+let hazardBefore = null;                         // bin_id -> state at the last poll
+function openNewHazard() {
+  const now = {};
+  for (const b of data.bins) now[b.bin_id] = b.state;
+  const fresh = data.bins.filter(b => b.state !== 'NORMAL'
+                                   && (hazardBefore === null || hazardBefore[b.bin_id] !== b.state));
+  hazardBefore = now;
+  if (!fresh.length) return;
+  const pick = fresh.find(b => b.state === 'FIRE') || fresh[0];
+  if (pick.bin_id !== selected) select(pick.bin_id, false);
+}
+
 // ---------- polling ----------
 async function poll() {
   const line = el('statusLine');
@@ -366,6 +404,7 @@ async function poll() {
     if (!selected || !data.bins.some(b => b.bin_id === selected)) {
       if (data.bins.length) select(data.bins[0].bin_id, false);
     }
+    openNewHazard();
     drawBanner(); drawTiles(); drawMap(); drawPriority(); drawCards(); drawEvents(); fillFilter();
     el('chartBin').textContent = selected ?? '-';
     line.className = 'right status-line';

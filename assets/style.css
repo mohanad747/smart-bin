@@ -123,21 +123,42 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .wifi i { width: 4px; background: #cdd5dc; border-radius: 1px; }
 .wifi i.on { background: var(--accent); }
 
-/* 1 or 2 bins: cards in a column on the left, charts on the right */
-#mid { margin-top: 16px; }
-#mid.few { display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 16px; align-items: stretch; }
-#mid.few > .panel { margin-bottom: 16px; }
-#mid.few .cards { grid-template-columns: 1fr; grid-auto-rows: 1fr; flex: 1; }
-/* the card fills the whole Bins panel, so its coloured edge ends where the charts panel ends */
-#mid.few > .panel:first-child { display: flex; flex-direction: column; }
-#mid.few .card { display: flex; flex-direction: column; }
-#mid.few .cardbody { flex: 1; gap: 22px; }
-#mid.few .binpic { width: 130px; height: 162px; }
-#mid.few .card .fill { font-size: 52px; }
-#mid.few .card .fill .unit { font-size: 24px; }
-#mid.few .charts { grid-template-columns: minmax(0, 1fr); }   /* temperature under fill level */
-#mid.few .chart-box { height: 220px; }
-#mid.few .status-line { flex-basis: 100%; margin-left: 0; }
+/* Bins accordion on the left, charts on the right */
+#mid { margin-top: 16px; display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+       gap: 16px; align-items: stretch; }
+#mid > .panel { margin-bottom: 16px; }
+#mid > .panel:first-child { display: flex; flex-direction: column; }
+#mid .cards { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+#mid .status-line { flex-basis: 100%; margin-left: 0; }
+#mid .charts { grid-template-columns: minmax(0, 1fr); position: relative; }   /* temperature under fill level */
+#mid .chart-box { height: 220px; }
+
+/* open bin: fills the rest of the panel, so its edge ends where the charts panel ends */
+.card.open { display: flex; flex-direction: column; flex: 1; border-color: var(--accent); cursor: default; }
+.card.open.fire { border-color: var(--fire); }
+.card.open.vapour { border-color: var(--vapour); }
+.card.open .cardbody { flex: 1; gap: 22px; }
+.card.open .binpic { width: 130px; height: 162px; }
+.card.open .fill { font-size: 52px; }
+.card.open .fill .unit { font-size: 24px; }
+
+/* closed bin: one compact row */
+.card.mini { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.card.mini:hover { border-color: #b9c4cd; background: #f8fafb; }
+.card.mini.fire { border-color: var(--fire); background: #fff5f5; }
+.card.mini.vapour { border-color: var(--vapour); background: #fffbf0; }
+.card.mini .id { font-weight: 700; }
+.card.mini .name { color: var(--muted); font-size: 13px; flex: 1; min-width: 0;
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.minibar { width: 60px; height: 8px; background: #e6eaee; border-radius: 4px; overflow: hidden; flex: none; }
+.minibar i { display: block; height: 100%; }
+.card.mini .pct { font-weight: 700; width: 38px; text-align: right; flex: none; }
+.card.mini .chips { display: flex; gap: 4px; flex: none; }
+.card.mini .chev { color: var(--muted); flex: none; }
+
+/* "No readings" note over the empty charts */
+.chart-empty { margin: -4px 0 8px; padding: 8px 12px; border-radius: 6px; background: #f1f6f8;
+               color: var(--muted); font-size: 14px; }
 
 /* ---------- summary tiles ---------- */
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 6px 0 16px; }
@@ -234,7 +255,7 @@ details summary { cursor: pointer; font-weight: 600; }
 
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
-  .grid-top, .charts, #mid.few { grid-template-columns: 1fr; }
+  .grid-top, .charts, #mid { grid-template-columns: 1fr; }
   .tiles { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   #map { height: 300px; }
 }

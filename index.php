@@ -42,7 +42,7 @@ require __DIR__ . '/lib/header.php';
     </div>
   </section>
 
-  <!-- With 1 or 2 bins the cards sit beside the charts (class "few", set by dashboard.js) -->
+  <!-- Bins (accordion: the open bin is the one in the charts) beside the charts -->
   <div id="mid">
   <section class="panel">
     <div class="panel-head">
@@ -55,6 +55,7 @@ require __DIR__ . '/lib/header.php';
   <section class="panel">
     <div class="panel-head"><h2>Last 6 hours: <span id="chartBin">-</span></h2>
       <span class="right small muted">Click a bin card, map marker or list row to change</span></div>
+    <div id="chartEmpty" class="chart-empty" hidden></div>
     <div class="charts">
       <div><h3 class="small muted">Fill level (%)</h3><div class="chart-box"><canvas id="fillChart"></canvas></div></div>
       <div><h3 class="small muted">Temperature (°C)</h3><div class="chart-box"><canvas id="tempChart"></canvas></div></div>
