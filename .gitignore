@@ -2,6 +2,12 @@
 config.php
 firmware/SmartBin/secrets.h
 
+# WhatsApp gateway: login session, secret, packages
+wa-gateway/node_modules/
+wa-gateway/.wwebjs_auth/
+wa-gateway/.wwebjs_cache/
+wa-gateway/wa-config.json
+
 # Old practice version (its db.php holds a password)
 _practice/
 

@@ -1,0 +1,15 @@
+{
+  "name": "smart-bin-wa-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart Bin: sends fire alerts on WhatsApp through a linked WhatsApp account (WhatsApp Web).",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}

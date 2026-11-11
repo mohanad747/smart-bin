@@ -200,6 +200,16 @@ $app_path = app_url('api/ingest.php');
 
 $email_cfg = $CONFIG['alerts']['email'] ?? [];
 $wa_cfg    = $CONFIG['alerts']['whatsapp'] ?? [];
+$gw_cfg    = $CONFIG['alerts']['wa_gateway'] ?? [];
+
+// WhatsApp gateway: is it running and linked? (+ its groups, to pick one)
+$gw = null; $gw_groups = [];
+if (!empty($gw_cfg['enabled'])) {
+    $gw = wa_gateway_call($gw_cfg, 'GET', '/status', null, 3);
+    if (($gw['state'] ?? '') === 'READY') {
+        $gw_groups = wa_gateway_call($gw_cfg, 'GET', '/groups', null, 5)['groups'] ?? [];
+    }
+}
 
 $flash      = flash();
 $page_title = 'Smart Bin - Settings';
@@ -334,7 +344,26 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
       <tr><td>WhatsApp (CallMeBot)</td>
           <td><?= !empty($wa_cfg['enabled']) ? '<span class="chip ok">enabled</span>' : '<span class="chip off">off</span>' ?></td>
           <td><?= e(implode(', ', array_map(fn($r) => $r['phone'], (array)($wa_cfg['recipients'] ?? [])))) ?></td></tr>
+      <tr><td>WhatsApp (own gateway)</td>
+          <td><?php
+            if (empty($gw_cfg['enabled'])) {
+                echo '<span class="chip off">off</span>';
+            } elseif (empty($gw['ok'])) {
+                echo '<span class="chip FIRE">not running</span> <span class="small muted">start start-wa-gateway.bat</span>';
+            } elseif ($gw['state'] === 'READY') {
+                echo '<span class="chip ok">linked</span> <span class="small muted">sends as +' . e($gw['me']) . '</span>';
+            } elseif ($gw['state'] === 'QR') {
+                echo '<span class="chip nearly">needs linking</span> <a href="api/wa_qr.php" target="_blank">Show QR code</a>';
+            } else {
+                echo '<span class="chip off">' . e(strtolower($gw['state'])) . '</span>';
+            }
+          ?></td>
+          <td><?= e(implode(', ', (array)($gw_cfg['to'] ?? []))) ?: '<span class="small muted">none yet</span>' ?></td></tr>
     </table>
+    <?php if ($gw_groups): ?>
+      <p class="small muted" style="margin-top:8px">Groups this WhatsApp is in (add as <code>group:Name</code>):
+        <?= e(implode(', ', array_map(fn($g) => $g['name'], $gw_groups))) ?></p>
+    <?php endif; ?>
     <form method="post" style="margin-top:12px">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="test_alert">

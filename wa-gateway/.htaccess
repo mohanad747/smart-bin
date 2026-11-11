@@ -1,0 +1,2 @@
+# The gateway is a separate program, never served by Apache (its folder holds the WhatsApp login)
+Require all denied

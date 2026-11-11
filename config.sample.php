@@ -45,6 +45,17 @@ return [
             ],
         ],
 
+        // WhatsApp through our own gateway (wa-gateway/, start-wa-gateway.bat).
+        // It sends from a linked WhatsApp account (use a spare SIM).
+        // secret = the "secret" in wa-gateway/wa-config.json (made on first start).
+        // to = phone numbers in international format, and/or "group:<exact group name>".
+        'wa_gateway' => [
+            'enabled' => false,
+            'url'     => 'http://127.0.0.1:3010',
+            'secret'  => 'paste-from-wa-config.json',
+            'to'      => ['96890000000', 'group:Smart Bin Team'],
+        ],
+
         // Seconds to wait for SMTP / CallMeBot before giving up (keeps
         // ingest.php fast even if the internet is slow).
         'timeout_s' => 8,

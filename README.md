@@ -28,7 +28,8 @@ smart_bin/
 │   ├── history.php        chart data (last 6 h)
 │   ├── ack.php            acknowledge a fire alert
 │   ├── test_cmd.php       start/stop a test on the real bin (Simulator page)
-│   └── device_poll.php    ESP32 asks "any test for me?" every 2 s
+│   ├── device_poll.php    ESP32 asks "any test for me?" every 2 s
+│   └── wa_qr.php          QR code to link the WhatsApp gateway
 ├── tools/
 │   ├── simulator.php      real-bin tests + fake bin for testing without hardware
 │   └── sim_backfill.php
@@ -40,6 +41,7 @@ smart_bin/
 │   ├── migrate_1_1.sql    upgrade a 1.0 database (test mode columns)
 │   └── reset_data.sql     clear readings/events before a demo (keeps bins, settings, users)
 ├── firmware/SmartBin/     ESP32 Arduino sketch
+├── wa-gateway/            WhatsApp sender (Node.js), start with start-wa-gateway.bat
 ├── README.md, TESTING.md
 ```
 
@@ -103,7 +105,24 @@ All settings are in `config.php` → `'alerts'`. Each channel has `'enabled' => 
 3. In `config.php`: `'username'` = the Gmail address, `'app_password'` = the 16 letters,
    `'to'` = who receives alerts, `'enabled' => true`.
 
-**WhatsApp (CallMeBot, free)**
+**WhatsApp through our own gateway (recommended, free)**
+`wa-gateway/` is a small Node.js program (whatsapp-web.js) that sends from a **linked WhatsApp
+account, like WhatsApp Web**. Use a **spare SIM**, not a personal number: it is unofficial, and
+WhatsApp may block numbers that look like spam (one message per fire is far from that).
+1. Install Node.js 18+ and Google Chrome (the gateway uses Chrome, no extra download).
+2. Double-click **`start-wa-gateway.bat`** and keep its window open. The first start installs the
+   packages and creates `wa-gateway/wa-config.json` with a random `secret`.
+3. In `config.php` → `'wa_gateway'`: `'enabled' => true`, `'secret'` = the secret from
+   `wa-config.json`.
+4. **Settings → Urgent alerts → Show QR code**, then on the spare phone: WhatsApp → Linked devices →
+   Link a device → scan. The row turns **linked**. The link is remembered (`wa-gateway/.wwebjs_auth`).
+5. In `'to'` list phone numbers (`'96890000000'`) and/or groups (`'group:Smart Bin Team'`, exact
+   name; Settings lists the groups the spare number is in).
+- It listens on 127.0.0.1 only and every request needs the secret. Its login data is not in git
+  and the folder is blocked from the web.
+- For a real deployment use the official WhatsApp Business (Cloud) API instead.
+
+**WhatsApp (CallMeBot, free, but often full)**
 1. Each receiving phone adds the CallMeBot number shown on
    <https://www.callmebot.com/blog/free-api-whatsapp-messages/> to its contacts and sends it on
    WhatsApp: `I allow callmebot to send me messages`.

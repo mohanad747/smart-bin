@@ -75,6 +75,13 @@ function send_alert(mysqli $conn, array $CONFIG, string $kind, ?string $bin_id,
         }
     }
 
+    if (!empty($alerts['wa_gateway']['enabled'])) {
+        foreach ((array)$alerts['wa_gateway']['to'] as $to) {
+            $results[] = ['channel' => 'whatsapp', 'recipient' => $to]
+                       + send_wa_gateway($alerts['wa_gateway'], $to, $text, $timeout);
+        }
+    }
+
     // Log every attempt
     foreach ($results as $r) {
         $ok   = $r['ok'] ? 1 : 0;
@@ -121,6 +128,43 @@ function send_email(array $cfg, string $to, string $subject, string $text, int $
     } catch (MailException $ex) {
         return ['ok' => false, 'info' => $mail->ErrorInfo ?: $ex->getMessage()];
     }
+}
+
+// Call our WhatsApp gateway (wa-gateway/gateway.js on this laptop).
+// Returns the decoded JSON reply, or ['ok'=>false,'error'=>...] if it is not running.
+function wa_gateway_call(array $cfg, string $method, string $path, ?array $body, int $timeout): array
+{
+    $ch = curl_init(rtrim($cfg['url'], '/') . $path);
+    $headers = ['X-Gateway-Secret: ' . ($cfg['secret'] ?? '')];
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT        => $timeout + 10,   // WhatsApp may take a few seconds
+    ];
+    if ($method === 'POST') {
+        $headers[] = 'Content-Type: application/json';
+        $opts[CURLOPT_POST]       = true;
+        $opts[CURLOPT_POSTFIELDS] = json_encode($body);
+    }
+    $opts[CURLOPT_HTTPHEADER] = $headers;
+    curl_setopt_array($ch, $opts);
+    $raw = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($raw === false) {
+        return ['ok' => false, 'error' => 'gateway not running (start-wa-gateway.bat): ' . $err];
+    }
+    $j = json_decode($raw, true);
+    return is_array($j) ? $j : ['ok' => false, 'error' => 'bad gateway reply: ' . mb_substr($raw, 0, 200)];
+}
+
+// WhatsApp through our own gateway, to a number or "group:Name"
+function send_wa_gateway(array $cfg, string $to, string $text, int $timeout): array
+{
+    $r = wa_gateway_call($cfg, 'POST', '/send', ['to' => $to, 'text' => $text], $timeout);
+    return !empty($r['ok'])
+        ? ['ok' => true, 'info' => 'sent']
+        : ['ok' => false, 'info' => $r['error'] ?? 'unknown error'];
 }
 
 // WhatsApp through CallMeBot (one HTTP GET per recipient)
