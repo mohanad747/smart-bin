@@ -11,6 +11,8 @@ $base   = app_url('');
 <title><?= e($page_title ?? 'Smart Bin') ?></title>
 <link rel="stylesheet" href="<?= e($base) ?>assets/style.css?v=<?= filemtime(__DIR__ . '/../assets/style.css') ?>">
 <?= $extra_head ?? '' ?>
+<!-- hazard alert bar + pop-up on every page -->
+<script src="<?= e($base) ?>assets/alerts.js?v=<?= filemtime(__DIR__ . '/../assets/alerts.js') ?>" data-base="<?= e($base) ?>" defer></script>
 </head>
 <body>
 <header class="topbar">

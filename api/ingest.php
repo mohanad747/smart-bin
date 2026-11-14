@@ -23,6 +23,7 @@
 require __DIR__ . '/../lib/db.php';
 require __DIR__ . '/../lib/alerts.php';
 require __DIR__ . '/../lib/test_mode.php';
+require __DIR__ . '/../lib/demo.php';
 
 const MQ2_WARMUP_S  = 60;   // MQ-2 reads high while its heater warms up: ignore gas before this
 const MERGE_GAP_S   = 120;  // a hazard that comes back within 2 min continues the same event
@@ -295,12 +296,15 @@ $rate     = null;          // % per hour
 $status   = 'NO_DATA';
 $seconds_to_full = null;
 
+// demo bins in fast mode fill 60x faster: they need a shorter span (still 5 readings)
+$min_span = empty($bin['is_demo']) ? MIN_SPAN_S : max(40, intdiv(MIN_SPAN_S, demo_speed($conn)));
+
 $n = count($points);
 if ($n >= MIN_POINTS) {
     $times = array_map(fn($p) => (int)$p['t'], $points);
     $t0    = min($times);                              // oldest point = time 0
     $span  = max($times) - $t0;
-    if ($span >= MIN_SPAN_S) {
+    if ($span >= $min_span) {
         $sx = $sy = $sxx = $sxy = 0.0;
         foreach ($points as $p) {
             $x = ((int)$p['t'] - $t0) / 3600.0;        // hours
@@ -362,7 +366,10 @@ if (function_exists('fastcgi_finish_request')) {
 set_time_limit(90);
 $now_text = date('Y-m-d H:i:s');
 
-if ($fire_event !== null) {
+// Demo bins (example bins, not real) never send email / WhatsApp
+$may_alert = empty($bin['is_demo']);
+
+if ($fire_event !== null && $may_alert) {
     $show_temp = $temp ?? ($bin['last_temp_c'] === null ? null : (float)$bin['last_temp_c']);
     [$subject, $text] = fire_message($bin, $show_temp, $now_text, (bool)$event_is_test);
     $results = send_alert($conn, $CONFIG, 'FIRE', $bin_id, $fire_event, $subject, $text);
@@ -371,7 +378,7 @@ if ($fire_event !== null) {
     }
 }
 
-if ($send_full) {
+if ($send_full && $may_alert) {
     [$subject, $text] = full_message($bin, $fill, $now_text);
     send_alert($conn, $CONFIG, 'FULL', $bin_id, null, $subject, $text);
 }

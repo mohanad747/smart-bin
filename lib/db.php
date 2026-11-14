@@ -111,3 +111,30 @@ function json_out(array $data, int $code = 200): void
     echo json_encode($data);
     exit;
 }
+
+// Send a JSON reply, close the connection, THEN run $after (the browser
+// does not wait for it). Used to run the demo bins after a dashboard poll.
+function json_out_then(array $data, callable $after): void
+{
+    $body = json_encode($data);
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();      // other requests of this browser must not wait for us
+    }
+    ignore_user_abort(true);
+    http_response_code(200);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('Content-Length: ' . strlen($body));
+    header('Connection: close');
+    echo $body;
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    flush();
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    }
+    set_time_limit(30);
+    $after();
+    exit;
+}

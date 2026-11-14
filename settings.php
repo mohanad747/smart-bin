@@ -11,6 +11,7 @@
 
 require __DIR__ . '/lib/auth.php';
 require __DIR__ . '/lib/alerts.php';
+require __DIR__ . '/lib/demo.php';
 require_login();
 
 // ---------------------------------------------------------------------
@@ -102,6 +103,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $anchor = '#bins';
             break;
 
+        case 'delete_bin':
+            $bin_id = (string)($_POST['bin_id'] ?? '');
+            if (!db_one($conn, 'SELECT id FROM bins WHERE bin_id = ? AND is_demo = 0', 's', [$bin_id])) {
+                throw new FormError('Unknown bin.');
+            }
+            if (trim((string)($_POST['confirm_id'] ?? '')) !== $bin_id) {
+                throw new FormError("Not deleted: type $bin_id exactly to confirm.");
+            }
+            $conn->begin_transaction();
+            try {
+                db_exec($conn, 'DELETE FROM alert_log WHERE bin_id = ?
+                                OR event_id IN (SELECT id FROM events WHERE bin_id = ?)', 'ss', [$bin_id, $bin_id]);
+                db_exec($conn, 'DELETE FROM events   WHERE bin_id = ?', 's', [$bin_id]);
+                db_exec($conn, 'DELETE FROM readings WHERE bin_id = ?', 's', [$bin_id]);
+                db_exec($conn, 'DELETE FROM settings WHERE bin_id = ?', 's', [$bin_id]);
+                db_exec($conn, 'DELETE FROM bins     WHERE bin_id = ?', 's', [$bin_id]);
+                $conn->commit();
+            } catch (Throwable $ex) {
+                $conn->rollback();
+                throw $ex;
+            }
+            flash("$bin_id deleted.");
+            $anchor = '#bins';
+            break;
+
         case 'save_thresholds':
             $target = (string)($_POST['target'] ?? '');
             $is_default = ($target === 'DEFAULT');
@@ -167,6 +193,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $anchor = '#account';
             break;
 
+        case 'save_demo':
+            $speed = ($_POST['demo_speed'] ?? 'fast') === 'real' ? 'real' : 'fast';
+            $speed_changed = $speed !== app_setting($conn, 'demo_speed', 'fast');
+            set_app_setting($conn, 'demo_speed', $speed);
+            $on = ($_POST['demo_enabled'] ?? '0') === '1';
+            if ($on && $speed_changed && db_one($conn, 'SELECT id FROM bins WHERE is_demo = 1 LIMIT 1')) {
+                demo_reset($conn);             // new speed: fresh history that matches it
+            } else {
+                demo_set_enabled($conn, $on);
+            }
+            flash($on ? 'Demo bins shown (' . ($speed === 'fast' ? 'fast demo' : 'real time') . ').'
+                      : 'Demo bins hidden. Real bins are not affected.');
+            $anchor = '#demo';
+            break;
+
+        case 'reset_demo':
+            demo_reset($conn);
+            flash('Demo bins started again from fresh values.');
+            $anchor = '#demo';
+            break;
+
         default:
             throw new FormError('Unknown action.');
         }
@@ -180,12 +227,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ---------------------------------------------------------------------
 // Data for the page
 // ---------------------------------------------------------------------
-$bins     = db_all($conn, 'SELECT * FROM bins ORDER BY bin_id');
+$bins     = db_all($conn, 'SELECT * FROM bins WHERE is_demo = 0 ORDER BY bin_id');   // demo bins: own section
 $settings = [];
 foreach (db_all($conn, 'SELECT * FROM settings') as $s) {
     $settings[$s['bin_id']] = $s;
 }
 $alert_log = db_all($conn, 'SELECT * FROM alert_log ORDER BY id DESC LIMIT 15');
+$demo_on    = demo_enabled($conn);
+$demo_speed = app_setting($conn, 'demo_speed', 'fast');
 
 // Laptop LAN IPv4 addresses (the hotspot can change them)
 $ips = [];
@@ -273,6 +322,17 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
           <input type="hidden" name="action" value="new_token">
           <input type="hidden" name="bin_id" value="<?= e($b['bin_id']) ?>">
           <button class="btn small danger">Generate new token</button>
+        </form>
+        <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+        <form method="post" class="delete-bin">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="delete_bin">
+          <input type="hidden" name="bin_id" value="<?= e($b['bin_id']) ?>">
+          <div><strong>Delete this bin</strong><br>
+            <span class="small muted">Removes <?= e($b['bin_id']) ?> with all its readings, events and alerts. This cannot be undone.</span></div>
+          <label>Type <code><?= e($b['bin_id']) ?></code> to confirm
+            <input name="confirm_id" autocomplete="off" required pattern="<?= e(preg_quote($b['bin_id'], '/')) ?>"></label>
+          <button class="btn small danger">Delete bin</button>
         </form>
       </details>
     <?php endforeach; ?>
@@ -381,6 +441,33 @@ function num_box(string $name, string $label, $value, string $placeholder = '', 
                 <span class="small muted"><?= e($a['response']) ?></span></td></tr>
       <?php endforeach; ?>
     </table></div>
+  </section>
+
+  <!-- ============ Demo bins ============ -->
+  <section class="panel" id="demo">
+    <h2>Demo bins <span class="chip DEMO">DEMO</span></h2>
+    <p class="small muted">8 example bins around the UTAS Muscat campus that are not real. They show the map, priority list
+      and predictions, and never send email or WhatsApp.</p>
+    <form method="post" class="row" style="align-items:end">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="save_demo">
+      <label>Demo bins
+        <select name="demo_enabled">
+          <option value="1" <?= $demo_on ? 'selected' : '' ?>>Shown</option>
+          <option value="0" <?= $demo_on ? '' : 'selected' ?>>Hidden</option>
+        </select></label>
+      <label>Speed
+        <select name="demo_speed">
+          <option value="fast" <?= $demo_speed === 'fast' ? 'selected' : '' ?>>Fast demo (1 min = 1 h)</option>
+          <option value="real" <?= $demo_speed === 'real' ? 'selected' : '' ?>>Real time</option>
+        </select></label>
+      <div style="margin-bottom:10px"><button class="btn primary">Save</button></div>
+    </form>
+    <form method="post" onsubmit="return confirm('Start the demo bins again from fresh values? Their readings and events are deleted. Real bins are not touched.')">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="reset_demo">
+      <button class="btn">Reset demo bins</button>
+    </form>
   </section>
 
   <!-- ============ Account ============ -->

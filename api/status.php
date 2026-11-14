@@ -11,6 +11,7 @@
 
 require __DIR__ . '/../lib/auth.php';
 require __DIR__ . '/../lib/test_mode.php';
+require __DIR__ . '/../lib/demo.php';
 require_login(true);
 
 // ---------------------------------------------------------------------
@@ -21,12 +22,15 @@ $rows = db_all($conn,
             TIMESTAMPDIFF(SECOND, NOW(), b.predicted_full_at) AS seconds_to_full
      FROM bins b WHERE b.active = 1 ORDER BY b.bin_id');
 
+$demo_scale = demo_speed($conn);
 $bins = [];
 foreach ($rows as $r) {
     $th = get_thresholds($conn, $r['bin_id']);
     $seconds_ago = $r['seconds_ago'] === null ? null : (int)$r['seconds_ago'];
     // Offline = no reading for 3x the upload interval (or never seen)
     $offline = $seconds_ago === null || $seconds_ago > 3 * $th['upload_interval_s'];
+    // demo bins only move while a page is open; they are never "offline"
+    if ($r['is_demo']) $offline = false;
 
     // Open an OFFLINE event the first time we notice (closed by ingest.php)
     if ($offline && $r['last_seen'] !== null) {
@@ -75,16 +79,24 @@ foreach ($rows as $r) {
         'fw'                => $r['last_fw'],
         'thresholds'        => $th,
         'test'              => current_test($conn, $r['bin_id']),   // running test or null
+        'is_demo'           => (bool)$r['is_demo'],                 // example bin, not real
+        // demo bins in fast mode live 60x faster: the dashboard shows their rate and
+        // time-to-full in demo time (the priority order uses the real seconds)
+        'time_scale'        => $r['is_demo'] ? $demo_scale : 1,
     ];
 }
 
 // ---------------------------------------------------------------------
 // 5.0 Rank collection priority:
-//   1) bins with a known time-to-full (full now = 0), soonest first
-//   2) the rest by fill %, highest first
+//   1) by level: full, then nearly full, then the rest (no data last)
+//   2) inside a level: known time-to-full first, soonest first
+//   3) then by fill %, highest first
 // ---------------------------------------------------------------------
 $priority = $bins;
-usort($priority, function ($a, $b) {
+$rank = ['full' => 0, 'nearly' => 1, 'ok' => 2, 'unknown' => 3];
+usort($priority, function ($a, $b) use ($rank) {
+    $la = $rank[$a['level']]; $lb = $rank[$b['level']];
+    if ($la !== $lb) return $la <=> $lb;
     $ta = $a['seconds_to_full'];
     $tb = $b['seconds_to_full'];
     if ($ta !== null && $tb !== null && $ta !== $tb) return $ta <=> $tb;
@@ -98,28 +110,33 @@ $priority = array_map(fn($b) => $b['bin_id'], $priority);
 // Hazard banner: open VAPOUR, and FIRE until someone acknowledges it
 // ---------------------------------------------------------------------
 $hazards = db_all($conn,
-    "SELECT e.*, b.name, b.location_text, b.lat, b.lng
+    "SELECT e.*, b.name, b.location_text, b.lat, b.lng, b.is_demo
      FROM events e JOIN bins b ON b.bin_id = e.bin_id
-     WHERE (e.type = 'FIRE' AND (e.ended_at IS NULL OR e.acknowledged_at IS NULL))
-        OR (e.type = 'VAPOUR' AND e.ended_at IS NULL)
+     WHERE b.active = 1
+       AND ((e.type = 'FIRE' AND (e.ended_at IS NULL OR e.acknowledged_at IS NULL))
+        OR (e.type = 'VAPOUR' AND e.ended_at IS NULL))
      ORDER BY e.type = 'FIRE' DESC, e.started_at DESC");
 
 // ---------------------------------------------------------------------
 // Event log (newest first), with the alert status of each event
 // ---------------------------------------------------------------------
 $filter = $_GET['events_bin'] ?? '';
+// hidden demo bins (Settings > Demo bins off) leave the log too; real bins always stay
+$shown  = 'e.bin_id IN (SELECT bin_id FROM bins WHERE active = 1 OR is_demo = 0)';
 $sql = "SELECT e.*,
             TIMESTAMPDIFF(SECOND, e.started_at, COALESCE(e.ended_at, NOW())) AS duration_s,
-            (SELECT COUNT(*) FROM alert_log a WHERE a.event_id = e.id) AS alert_attempts
+            (SELECT COUNT(*) FROM alert_log a WHERE a.event_id = e.id) AS alert_attempts,
+            (SELECT b.is_demo FROM bins b WHERE b.bin_id = e.bin_id) AS is_demo
         FROM events e";
 if (is_string($filter) && $filter !== '') {
-    $events = db_all($conn, $sql . ' WHERE e.bin_id = ? ORDER BY e.started_at DESC, e.id DESC LIMIT 100',
+    $events = db_all($conn, $sql . ' WHERE e.bin_id = ? AND ' . $shown . ' ORDER BY e.started_at DESC, e.id DESC LIMIT 100',
                      's', [$filter]);
 } else {
-    $events = db_all($conn, $sql . ' ORDER BY e.started_at DESC, e.id DESC LIMIT 100');
+    $events = db_all($conn, $sql . ' WHERE ' . $shown . ' ORDER BY e.started_at DESC, e.id DESC LIMIT 100');
 }
 
-json_out([
+// reply first, then let the demo bins take their next step (if it is time)
+json_out_then([
     'ok'       => true,
     'now'      => date('Y-m-d H:i:s'),
     'user'     => current_user(),
@@ -128,4 +145,4 @@ json_out([
     'priority' => $priority,
     'hazards'  => $hazards,
     'events'   => $events,
-]);
+], fn() => demo_tick($conn));

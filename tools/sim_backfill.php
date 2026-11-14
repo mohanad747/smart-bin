@@ -18,6 +18,10 @@ $bin = db_one($conn, 'SELECT * FROM bins WHERE bin_id = ?', 's', [$bin_id]);
 if (!$bin) {
     json_out(['ok' => false, 'error' => 'unknown bin'], 400);
 }
+if (!$bin['is_demo']) {
+    // fake history on a real bin would mix with the ESP32's real readings
+    json_out(['ok' => false, 'error' => 'only for demo bins'], 400);
+}
 
 // Do not go back past the last EMPTIED event (prediction starts there)
 $since = db_one($conn,

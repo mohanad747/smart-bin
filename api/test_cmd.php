@@ -18,7 +18,7 @@ csrf_check();
 
 $bin_id = $_POST['bin_id'] ?? '';
 $mode   = $_POST['mode'] ?? '';
-$bin = db_one($conn, 'SELECT bin_id FROM bins WHERE bin_id = ? AND active = 1', 's', [(string)$bin_id]);
+$bin = db_one($conn, 'SELECT bin_id FROM bins WHERE bin_id = ? AND active = 1 AND is_demo = 0', 's', [(string)$bin_id]);
 if ($bin === null) {
     json_out(['ok' => false, 'error' => 'unknown bin'], 400);
 }

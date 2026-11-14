@@ -39,6 +39,7 @@ smart_bin/
 │   ├── schema.sql         tables (D1 bins, D2 readings, D3 events, D4 settings, D5 users, alert_log)
 │   ├── seed.sql           BIN-01 at UTAS Muscat, admin user, default thresholds
 │   ├── migrate_1_1.sql    upgrade a 1.0 database (test mode columns)
+│   ├── migrate_1_2.sql    upgrade a 1.1 database (demo bins, app settings)
 │   └── reset_data.sql     clear readings/events before a demo (keeps bins, settings, users)
 ├── firmware/SmartBin/     ESP32 Arduino sketch
 ├── wa-gateway/            WhatsApp sender (Node.js), start with start-wa-gateway.bat
@@ -61,7 +62,8 @@ smart_bin/
    C:\xampp\mysql\bin\mysql.exe -u root -p < C:\xampp\htdocs\smart_bin\sql\seed.sql
    ```
    (Press Enter at the password prompt if your MySQL root has no password.)
-   Already have a 1.0 database? Import `sql/migrate_1_1.sql` instead (adds the test-mode columns).
+   Already have an older database? Import `sql/migrate_1_1.sql` (from 1.0) and then
+   `sql/migrate_1_2.sql` (from 1.1) instead.
 4. Copy `config.sample.php` to `config.php` and set the MySQL password in `'db' => ['pass' => ...]`.
 5. Open <http://localhost/smart_bin/> and log in:
    - user **admin**, password **SmartBin@2026**
@@ -141,6 +143,17 @@ How alerts behave:
   reaches the *Full* threshold (again only after it was emptied).
 - The server answers the ESP32 **first** and sends the alert afterwards, with a short timeout
   (`'timeout_s'`), so the bin never waits for email/WhatsApp.
+- **Demo bins never send email or WhatsApp.**
+
+**On screen, on every page** (`assets/alerts.js`, asks `api/alerts.php` every 3 s)
+- A **bar under the menu that stays visible while scrolling**: red for FIRE (flashing until
+  acknowledged), amber for gas vapour. A fire stays in the bar until it is over and acknowledged.
+- A **pop-up** when a new hazard starts. The fire pop-up stays until someone presses
+  **Acknowledge** or "Show the bin" (which shows the bin on the dashboard map; the bar keeps
+  Acknowledge and the alarm until someone acknowledges); the gas pop-up can be closed.
+- An **alarm sound** (made in the browser, no file) every 3 s while a fire is not acknowledged.
+  Browsers only allow sound after you clicked on the page once. **Sound on/off** is in the bar.
+- The **tab title flashes** "🔥 FIRE".
 
 ---
 
@@ -206,9 +219,11 @@ in the circuit during a demo without a real fire:
   check confirms from the sensor values is never marked as a test.
 - A second fire test within 2 minutes continues the same event, so it does not send a second alert.
 
-### Virtual bin (no hardware)
-Sends fake readings through the real `api/ingest.php`. Use a bin whose ESP32 is switched off,
-otherwise the fake and real readings mix:
+### Virtual bin (demo bins only)
+Sends fake readings through the real `api/ingest.php`, for **demo bins only** (the demo data of that
+bin pauses while you use it). Real bins are not listed: fake readings on a real bin mix with the
+ESP32's, and a jump from its real 25 °C to a fake 31 °C looked like a sudden temperature rise,
+which the server treats as a FIRE. Fake values now start from the bin's own latest values.
 
 | Button | What it does |
 |---|---|
@@ -224,6 +239,21 @@ otherwise the fake and real readings mix:
 
 Keep the dashboard open in another tab to watch it react. Before a real demo, clear the test data
 with `sql/reset_data.sql` (it keeps bins, thresholds and users).
+
+### Demo bins
+**Settings → Demo bins** adds 8 example bins on and around the UTAS Muscat campus (main gate,
+cafeteria, library, sports ground, car park, bus stop, mosque, shops street) that are **not real**. They show the map, priority
+list, predictions and emptying with live, realistic data.
+- Marked **DEMO** everywhere (cards, rows, priority list, map markers with a dashed edge, events).
+- Their readings go through the real `api/ingest.php` (`lib/demo.php`), so fill %, predictions,
+  priority and EMPTIED events use the real logic. Each bin has its own fill rate (busy places fill
+  faster, more in the day than at night), Muscat temperatures and normal gas values. A full bin is
+  emptied on average 1.5 h (demo time) later.
+- **Fast demo** (default): 1 real minute = 1 hour, so the priority list visibly changes during a
+  presentation. Rates and "Full in" are shown in demo time. **Real time** is also possible.
+- They only move while a dashboard page is open (no extra program), and are never "offline".
+- They never send email or WhatsApp. Real bins and their data are never touched.
+- **Hidden** removes them from the dashboard and log; **Reset demo bins** starts them fresh.
 
 ---
 
@@ -254,7 +284,7 @@ What the server does with a reading (DFD processes):
 | 2.0 Detect hazard | `ingest.php` | trusts the ESP32 state but re-checks the thresholds; if the server's check is more severe, that state is used. Opens/closes VAPOUR & FIRE events with peak values; EMPTIED when fill drops ≥ 30 points and stays down for 3 readings in a row (one odd echo is ignored) |
 | 3.0 Send urgent alert | `lib/alerts.php` | one alert per new FIRE event, after replying |
 | 4.0 Predict time-to-full | `ingest.php` | straight-line fit of fill % over time since the last EMPTIED; needs ≥ 5 readings over ≥ 10 min, else "Not enough data"; rate ≤ 0.1 %/h = "Not filling" |
-| 5.0 Rank collection priority | `status.php` | soonest time-to-full first, then highest fill |
+| 5.0 Rank collection priority | `status.php` | full, then nearly full, then the rest; inside each: soonest time-to-full, then highest fill |
 | 6.0 Log in and show dashboard | `login.php`, `index.php` | |
 | 7.0 Manage bins and settings | `settings.php` | |
 

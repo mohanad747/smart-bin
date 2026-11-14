@@ -46,59 +46,40 @@ const LEVEL_COLOR = { ok: '#2e7d32', nearly: '#e08a00', full: '#c62828', unknown
 const TEST_CHIP = '<span class="chip TEST">TEST</span>';
 function testChip(e) { return Number(e.is_test) ? ' ' + TEST_CHIP : ''; }
 
+// Grey "DEMO" chip for example bins (not real)
+const DEMO_CHIP = '<span class="chip DEMO" title="Example bin, not real">DEMO</span>';
+function demoChip(x) { return Number(x.is_demo) ? ' ' + DEMO_CHIP : ''; }
+
 // Text for the priority list
 function etaText(b) {
   switch (b.prediction_status) {
     case 'FULL':        return 'Full now: collect';
-    case 'FILLING':     return 'Full in ~' + duration(b.seconds_to_full);
+    case 'FILLING':     return 'Full in ~' + duration(b.seconds_to_full * (b.time_scale || 1));
     case 'NOT_FILLING': return 'Not filling';
     default:            return 'Not enough data';
   }
 }
 
-// ---------- hazard banner ----------
+// ---------- status line under the menu ----------
+// Hazards are shown by assets/alerts.js on every page (sticky bar + pop-up),
+// so here only the calm "All bins normal" line is drawn when nothing is wrong.
 function drawBanner() {
   const box = el('banner');
-  const hz = data.hazards;
+  if (data.hazards.length) { box.innerHTML = ''; return; }
   const offline = data.bins.filter(b => b.offline);
-  if (hz.length === 0) {
-    let extra = offline.length ? ` · ${offline.length} bin(s) offline: ${offline.map(b => esc(b.bin_id)).join(', ')}` : '';
-    box.innerHTML = `<div class="banner calm"><span class="icon">✓</span><span class="text"><b>All bins normal</b>${extra}</span></div>`;
-    document.title = 'Smart Bin - Dashboard';
-    return;
-  }
-  let html = '';
-  let anyFire = false;
-  for (const h of hz) {
-    const where = `${esc(h.bin_id)}: ${esc(h.name)}, ${esc(h.location_text)}`;
-    if (h.type === 'FIRE') {
-      anyFire = true;
-      const acked = h.acknowledged_at !== null;
-      const ended = h.ended_at ? ` · fire ended at ${esc(timeOnly(h.ended_at))}` : ' · still burning';
-      const ackPart = acked
-        ? `<span>Acknowledged by <b>${esc(h.acknowledged_by)}</b> at ${esc(timeOnly(h.acknowledged_at))}</span>`
-        : `<button class="btn white" data-ack="${h.id}">Acknowledge</button>`;
-      html += `<div class="banner fire ${acked ? 'acked' : ''}">
-        <span class="icon">🔥</span>
-        <span class="text"><b>FIRE at ${where}</b>${testChip(h)}<br>Started ${esc(h.started_at)}${ended}
-          · peak ${num(h.peak_temp_c)} °C</span>
-        <span class="call">Call Civil Defence 9999</span>${ackPart}</div>`;
-    } else {
-      html += `<div class="banner vapour"><span class="icon">⚠</span>
-        <span class="text"><b>Flammable vapour at ${where}</b>${testChip(h)}<br>Since ${esc(timeOnly(h.started_at))}
-          · gas peak ${esc(h.peak_gas_raw)} · fan venting the bin</span></div>`;
-    }
-  }
-  box.innerHTML = html;
-  document.title = anyFire ? '🔥 FIRE - Smart Bin' : '⚠ Vapour - Smart Bin';
-  box.querySelectorAll('[data-ack]').forEach(btn => btn.onclick = () => acknowledge(btn.dataset.ack));
+  const extra = offline.length ? ` · ${offline.length} bin(s) offline: ${offline.map(b => esc(b.bin_id)).join(', ')}` : '';
+  box.innerHTML = `<div class="banner calm"><span class="icon">✓</span><span class="text"><b>All bins normal</b>${extra}</span></div>`;
 }
 
-async function acknowledge(id) {
-  const body = new URLSearchParams({ event_id: id, csrf: data.csrf });
-  await fetch('api/ack.php', { method: 'POST', body });
-  poll();
-}
+// alerts.js calls this after an acknowledge, so the dashboard redraws at once
+window.sbRefresh = () => poll();
+// alerts.js "Show the bin": open the bin and show it on the map, no page reload
+window.sbShowBin = binId => {
+  select(binId, false);
+  showOnMap(binId);
+  const m = el('map');
+  if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
 
 // ---------- map (Leaflet) ----------
 function initMap() {
@@ -124,19 +105,21 @@ function pinIcon(b) {
   let cls = b.level, label = b.fill_pct === null ? '?' : Math.round(b.fill_pct) + '%';
   if (b.state === 'FIRE') { cls = 'fire'; label = '🔥'; }
   else if (b.state === 'VAPOUR') cls += ' vapour';
+  if (b.is_demo) cls += ' demo';
   return L.divIcon({ className: '', html: `<div class="pin ${cls}">${esc(label)}</div>`,
                      iconSize: [34, 34], iconAnchor: [17, 17] });
 }
 
 function drawMap() {
   if (!map) return;
+  map.invalidateSize();                   // the map panel follows the priority list's height
   const seen = {};
   const points = [];
   for (const b of data.bins) {
     if (b.lat === null || b.lng === null) continue;
     seen[b.bin_id] = true;
     points.push([b.lat, b.lng]);
-    const tip = `<b>${esc(b.bin_id)}</b> ${esc(b.name)}<br>${num(b.fill_pct, 0)}% · ${esc(b.state)}`;
+    const tip = `<b>${esc(b.bin_id)}</b> ${esc(b.name)}${b.is_demo ? ' (demo, not real)' : ''}<br>${num(b.fill_pct, 0)}% · ${esc(b.state)}`;
     if (!markers[b.bin_id]) {
       markers[b.bin_id] = L.marker([b.lat, b.lng]).addTo(map)
         .on('click', () => select(b.bin_id, true));
@@ -152,6 +135,14 @@ function drawMap() {
   }
 }
 
+// Centre the map on a bin and show its label (priority list click)
+function showOnMap(binId) {
+  const m = map && markers[binId];
+  if (!m) return;
+  map.panTo(m.getLatLng());
+  m.openTooltip();
+}
+
 // ---------- priority list ----------
 function drawPriority() {
   const byId = Object.fromEntries(data.bins.map(b => [b.bin_id, b]));
@@ -161,12 +152,15 @@ function drawPriority() {
     const b = byId[id];
     return `<li data-bin="${esc(id)}" class="${id === selected ? 'sel' : ''}">
       <span class="rank" style="background:${LEVEL_COLOR[b.level]}">${i + 1}</span>
-      <span class="info"><b>${esc(b.bin_id)}</b> <span class="small muted">${esc(b.name)}</span><br>
+      <span class="info"><b>${esc(b.bin_id)}</b> <span class="small muted">${esc(b.name)}</span>${demoChip(b)}<br>
         <span class="eta">${esc(etaText(b))}</span>
         ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}</span>
       <span class="pct" style="color:${LEVEL_COLOR[b.level]}">${num(b.fill_pct, 0)}%</span></li>`;
   }).join('');
-  list.querySelectorAll('li[data-bin]').forEach(li => li.onclick = () => select(li.dataset.bin, true));
+  list.querySelectorAll('li[data-bin]').forEach(li => li.onclick = () => {
+    select(li.dataset.bin, false);          // stay here: show the bin on the map instead
+    showOnMap(li.dataset.bin);
+  });
 }
 
 // ---------- summary tiles ----------
@@ -187,9 +181,11 @@ function drawTiles() {
 
   const hazards = fire.length + vapour.length;
   const collect = full.length + nearly.length;
+  const demos   = bins.filter(b => b.is_demo).length;
   el('tiles').innerHTML =
     tile(offline.length ? 'off' : 'ok', 'Bins online', `${total - offline.length}<span class="of"> / ${total}</span>`,
-         offline.length ? 'Offline: ' + ids(offline) : 'All bins reporting') +
+         (offline.length ? 'Offline: ' + ids(offline) : 'All bins reporting')
+         + (demos ? ` · ${demos} of them demo` : '')) +
     tile(full.length ? 'full' : nearly.length ? 'nearly' : 'ok', 'Need collection', collect,
          collect ? [full.length ? full.length + ' full' : '', nearly.length ? nearly.length + ' nearly full' : '']
                      .filter(Boolean).join(', ')
@@ -255,6 +251,7 @@ function binRow(b, stateCls) {
         ${b.state !== 'NORMAL' ? `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>` : ''}
         ${b.test ? TEST_CHIP : ''}
         ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}
+        ${b.is_demo ? DEMO_CHIP : ''}
       </span>
       <span class="chev">▸</span>
     </div>`;
@@ -272,6 +269,7 @@ function drawCards() {
     return `<div class="card open ${stateCls}" id="card-${esc(b.bin_id)}" data-bin="${esc(b.bin_id)}">
       <div class="head">
         <span class="id">${esc(b.bin_id)}</span><span class="name">${esc(b.name)}</span>
+        ${b.is_demo ? DEMO_CHIP : ''}
         <span class="chip ${esc(b.state)}">${esc(b.state)}</span>
         ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}
         ${b.test ? `${TEST_CHIP} <span class="small muted">${b.test.mode === 'FIRE' ? 'fire' : 'gas'} test, ${b.test.seconds_left} s left</span>` : ''}
@@ -283,7 +281,7 @@ function drawCards() {
           <div class="fill" style="color:${color}">${num(b.fill_pct, 0)}<span class="unit">%</span></div>
           <div><span class="chip ${esc(b.level)}">${levelText}</span></div>
           <div class="eta">${esc(etaText(b))}</div>
-          <div class="small muted">Fill rate: ${b.fill_rate === null ? '–' : num(b.fill_rate, 1) + ' %/h'}</div>
+          <div class="small muted">Fill rate: ${b.fill_rate === null ? '–' : num(b.fill_rate / (b.time_scale || 1), 1) + ' %/h'}</div>
         </div>
       </div>
       ${gasGauge(b)}
@@ -313,7 +311,7 @@ function drawEvents() {
   const body = el('events');
   if (data.events.length === 0) { body.innerHTML = '<tr class="empty"><td colspan="10">No events yet</td></tr>'; return; }
   body.innerHTML = data.events.map(e => `<tr>
-    <td><span class="chip ${esc(e.type)}">${esc(e.type)}</span>${testChip(e)}</td>
+    <td><span class="chip ${esc(e.type)}">${esc(e.type)}</span>${testChip(e)}${demoChip(e)}</td>
     <td>${esc(e.bin_id)}</td>
     <td>${esc(e.started_at)}</td>
     <td>${e.ended_at ? esc(e.ended_at) : '<b>ongoing</b>'}</td>
@@ -368,6 +366,8 @@ function select(binId, scroll) {
   selected = binId;
   try { localStorage.setItem('sb_selected', binId); } catch (e) {}
   el('chartBin').textContent = binId;
+  const selBin = data && data.bins.find(b => b.bin_id === binId);
+  el('chartDemo').hidden = !(selBin && selBin.is_demo && selBin.time_scale > 1);
   if (data) { drawCards(); drawPriority(); }
   if (scroll) {
     const card = document.getElementById('card-' + binId);
@@ -405,8 +405,10 @@ async function poll() {
       if (data.bins.length) select(data.bins[0].bin_id, false);
     }
     openNewHazard();
-    drawBanner(); drawTiles(); drawMap(); drawPriority(); drawCards(); drawEvents(); fillFilter();
+    drawBanner(); drawTiles(); drawPriority(); drawMap(); drawCards(); drawEvents(); fillFilter();
     el('chartBin').textContent = selected ?? '-';
+    const selBin = data.bins.find(b => b.bin_id === selected);
+    el('chartDemo').hidden = !(selBin && selBin.is_demo && selBin.time_scale > 1);
     line.className = 'right status-line';
     line.textContent = 'Live · updated ' + data.now.slice(11) + ' · every 5 s';
   } catch (e) {
@@ -422,6 +424,13 @@ if (typeof Chart !== 'undefined') {
   tempChart = makeChart(el('tempChart'), 'Temperature °C', '#d97706', undefined, undefined);
 }
 el('eventFilter').onchange = poll;
+// index.php?bin=BIN-02 (from the alert pop-up's "Show the bin"): open that bin
+const askedBin = new URLSearchParams(location.search).get('bin');
+if (askedBin) {
+  selected = askedBin;
+  try { localStorage.setItem('sb_selected', askedBin); } catch (e) {}
+  history.replaceState(null, '', location.pathname);
+}
 poll().then(loadHistory);   // charts at once, also when the bin was remembered from last time
 setInterval(poll, POLL_MS);
 setInterval(loadHistory, HISTORY_MS);

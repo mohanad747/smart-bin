@@ -37,7 +37,7 @@ require __DIR__ . '/lib/header.php';
 
     <div class="panel">
       <div class="panel-head"><h2>Priority collection list</h2></div>
-      <p class="small muted" style="margin-top:-6px">Soonest to be full first, then by fill level.</p>
+      <p class="small muted" style="margin-top:-6px">Full first, then nearly full, then the rest; soonest to be full first in each.</p>
       <ol id="priority" class="priority"></ol>
     </div>
   </section>
@@ -53,7 +53,7 @@ require __DIR__ . '/lib/header.php';
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>Last 6 hours: <span id="chartBin">-</span></h2>
+    <div class="panel-head"><h2>Last 6 hours: <span id="chartBin">-</span> <span id="chartDemo" class="chip DEMO" hidden>Fast demo: 1 min = 1 h</span></h2>
       <span class="right small muted">Click a bin card, map marker or list row to change</span></div>
     <div id="chartEmpty" class="chart-empty" hidden></div>
     <div class="charts">

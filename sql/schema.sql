@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS bins (
   state                 ENUM('NORMAL','VAPOUR','FIRE') NOT NULL DEFAULT 'NORMAL',
   last_seen             DATETIME     NULL,
   active                TINYINT(1)   NOT NULL DEFAULT 1,
+  is_demo               TINYINT(1)   NOT NULL DEFAULT 0,       -- demo bin: fake data, never alerts
   -- last good values for display
   last_distance_cm      DECIMAL(6,1) NULL,
   last_temp_c           DECIMAL(5,1) NULL,
@@ -131,6 +132,14 @@ CREATE TABLE IF NOT EXISTS users (
   full_name      VARCHAR(80)  NOT NULL DEFAULT '',
   created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_login     DATETIME     NULL
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- App settings (key/value): demo bins on/off, demo speed, last demo tick
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_settings (
+  k  VARCHAR(40)  NOT NULL PRIMARY KEY,
+  v  VARCHAR(100) NOT NULL
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
