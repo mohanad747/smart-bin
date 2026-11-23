@@ -11,8 +11,8 @@ uint32_t last = 0, beepEnd = 0;
 void buzzer(bool on) { digitalWrite(PIN_BUZZER, on ? onLevel : !onLevel); }
 
 void setup() {
-  digitalWrite(PIN_RELAY, HIGH);          // relay OFF before the pin becomes an output
   pinMode(PIN_RELAY, OUTPUT);
+  digitalWrite(PIN_RELAY, HIGH);          // relay OFF
   pinMode(PIN_BUZZER, OUTPUT);
   buzzer(false);
   Serial.begin(115200);
