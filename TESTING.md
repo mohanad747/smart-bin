@@ -8,6 +8,7 @@ serial log) for the report.
 - Apache + MySQL running, logged in as `admin`.
 - For a clean run: import `sql/reset_data.sql`.
 - "Sim" = the Simulator page. "ESP32" = the real bin unit with the Serial Monitor open (115200).
+- Firmware 1.3.0 needs the wiring and the stage tests in [WIRING.md](WIRING.md) first.
 - Steps marked **(sim)** can be done without hardware. Do them again with the ESP32 for the final
   report where it says **(ESP32)**.
 
@@ -25,6 +26,16 @@ serial log) for the report.
 | FR5 | Automatic hazard response | **(ESP32)** Repeat FR4 with **Wi-Fi off** (stop the hotspot). | VAPOUR: fan ON, buzzer off. FIRE: fan OFF, buzzer ON. Works with "wifi down" in the serial line. | ☐ |
 | FR5b | Hazard response from the dashboard (test mode) | **(ESP32)** Simulator → Real bin test → *Test fire*, wait, *Stop test*; then *Test gas leak*. | Within ~2 s: fire → buzzer ON, fan OFF; gas → fan ON. Serial shows "TEST … from the dashboard" and "(TEST)" on each line. Dashboard banner and event log show **TEST**. Test ends by itself after the chosen time. | ☐ |
 | FR6b | Alerts can't be missed | **(sim)** Settings → Demo bins: Shown. Simulator → Virtual bin → a demo bin → *Gas leak*, then *Fire*. Open Dashboard and Settings, scroll down. | On every page: sticky amber / red bar at the top while scrolling; pop-up for each new hazard (fire pop-up stays until *Acknowledge* or *Show the bin*; *Show the bin* on the dashboard shows the bin on the map without reloading or a second pop-up); alarm sound during an unacknowledged fire; tab title flashes. No email/WhatsApp for demo bins (alert table unchanged). | ☐ |
+| FR9c | Lid opens for a hand | **(ESP32)** Hold a hand 15 cm in front of the front sensor, then take it away. | Flap opens within 1 s, closes 4 s after the hand left. Serial: "Lid CLOSED -> OPEN_HAND". "Lid opened today" goes up. | ☐ |
+| FR9d | Locked when full | **(ESP32)** Fill above the *Full* threshold, hold a hand at the lid. | Stays closed, 2 short beeps (not more than once per 5 s). Dashboard "Locked: full", LOCKED: FULL event. | ☐ |
+| FR9e | Open for emptying | **(ESP32)** Bin full: press *Open for emptying*. Leave it 2 min. Repeat and press *Close lid*. | Opens within about 2 s although full; closes by itself after 2 min; *Close lid* closes it at once. Event log shows the operator name; button shows sent, done. | ☐ |
+| FR5c | Fire locks the lid, ball drops once | **(ESP32)** Ball hung, lid open by hand, flame near the sensor **after the lid closed** for 5 s. | Alarm at once, lid closes and locks, ball drops after about 3 s of flame. A second flame does not move the ball servo. *Open for emptying* is refused. "Released, refill needed". Alert + second message "fire ball released". | ☐ |
+| FR5d | One short flash does not drop the ball | **(ESP32)** Flick a lighter for less than 1 s. | FIRE alarm, but the ball stays. | ☐ |
+| FR5e | Released survives a reboot | **(ESP32)** After FR5c press the EN button. | Serial says "Fire ball RELEASED"; dashboard still red until *Re-arm ball* (asks if the ball was hung). | ☐ |
+| FR5f | Test fire keeps the ball | **(ESP32)** Simulator → *Test fire* without the tick, then with *Drop the real fire ball*. | Without: buzzer, lid locked, ball stays. With: ball drops. The tick is gone afterwards. | ☐ |
+| FR5g | Offline rules | **(ESP32)** Bin full, stop Apache for 5 min, hold a hand at the lid. Then a flame. | After 5 min the lid opens for the hand. The fire still locks it and drops the ball. | ☐ |
+| FR5h | Servos and power | **(ESP32)** Open and close the lid 20 times, drop the ball 5 times, on the power bank. | No reset (Serial never prints the start line again), Wi-Fi stays connected. | ☐ |
+| FR2c | Old firmware still works | **(sim)** Send the API test reading below (no `lid`, `ball`). | 200; the card shows no lid panel. | ☐ |
 | FR6 | Emergency notifications | **(sim)** Enable email/WhatsApp in `config.php`, press *Settings → Send test alert*, then run *Fire* once. Then *Gas leak*. | Test message arrives. Fire: **one** message with bin, location, Maps link, temperature, time, 9999; event log "Alert: Sent". Gas leak: **no** message, amber banner only. | ☐ |
 | FR7 | Dashboard display | **(sim)** Open the dashboard. | Fill %, location on the map, state, temperature, humidity, gas, fan, buzzer, last seen are shown. | ☐ |
 | FR8 | Data and hazard logging | After the tests: `SELECT type, started_at, ended_at, peak_temp_c, peak_gas_raw FROM events;` and the dashboard event log. | Every VAPOUR/FIRE/EMPTIED/OFFLINE event with start, end, peaks; readings table has every reading with time. | ☐ |
@@ -99,4 +110,5 @@ curl -i -H "Content-Type: application/json" -d '{"bin_id":"BIN-01","token":"'$TO
 | Nulls | `200`, dashboard keeps the last good values | ☐ |
 | Wrong token | `401 {"ok":false,"error":"invalid token"}` | ☐ |
 | Out of range | `400 {"ok":false,"error":"temp_c out of range (-40 to 80)"}` | ☐ |
+| `"lid":"OPEN"` (not a known state) | `400 lid must be CLOSED, OPEN_HAND, ...` | ☐ |
 | Alert does not delay the reply (enable email with a wrong SMTP host, send a FIRE reading) | reply in < 0.5 s; the failed attempt appears in the alert table a few seconds later | ☐ |

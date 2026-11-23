@@ -22,7 +22,9 @@ function maps_link(array $bin): string
 
 // Text of the FIRE alert (plain text, works for email and WhatsApp).
 // $is_test = started from the Simulator page: clearly marked as a test.
-function fire_message(array $bin, ?float $temp_c, string $time, bool $is_test = false): array
+// $lid / $ball = what the bin reports (null = older firmware without them).
+function fire_message(array $bin, ?float $temp_c, string $time, bool $is_test = false,
+                      ?string $lid = null, ?string $ball = null): array
 {
     $temp = $temp_c === null ? 'not available' : number_format($temp_c, 1) . ' °C';
     $subject = ($is_test ? 'TEST - ' : '') . "FIRE ALERT - {$bin['bin_id']} {$bin['name']}";
@@ -32,8 +34,32 @@ function fire_message(array $bin, ?float $temp_c, string $time, bool $is_test = 
           . "Location: {$bin['location_text']}\n"
           . "Map: " . maps_link($bin) . "\n"
           . "Temperature: {$temp}\n"
+          . bin_reaction($lid, $ball)
           . "Time: {$time}\n"
           . "Call Civil Defence: 9999";
+    return [$subject, $text];
+}
+
+// "Lid locked, fire ball released." - what the bin did by itself
+function bin_reaction(?string $lid, ?string $ball): string
+{
+    $parts = [];
+    if ($lid === 'LOCKED_FIRE')  $parts[] = 'Lid locked';
+    if ($ball === 'RELEASED')    $parts[] = 'fire ball released';
+    elseif ($ball === 'ARMED')   $parts[] = 'fire ball armed, it drops when the fire is confirmed';
+    return $parts ? 'Bin reaction: ' . implode(', ', $parts) . "\n" : '';
+}
+
+// Second message of a fire: the ball has dropped
+function ball_message(array $bin, string $time, bool $is_test): array
+{
+    $subject = ($is_test ? 'TEST - ' : '') . "Fire ball released - {$bin['bin_id']} {$bin['name']}";
+    $text = ($is_test ? "🧪 TEST ONLY - this is a drill, there is no real fire.\n" : '')
+          . "🧯 FIRE at {$bin['bin_id']} ({$bin['name']}): lid locked, fire ball released.\n"
+          . "Location: {$bin['location_text']}\n"
+          . "Map: " . maps_link($bin) . "\n"
+          . "Time: {$time}\n"
+          . "Call Civil Defence: 9999. Hang a new ball and re-arm it after the fire.";
     return [$subject, $text];
 }
 

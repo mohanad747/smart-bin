@@ -1,18 +1,21 @@
 <?php
 // =====================================================================
 // POST /smart_bin/api/device_poll.php     (called by the ESP32 every 2 s)
-// Tiny "any test for me?" check, so a test from the Simulator page
-// reaches the bin in about 2 s instead of waiting for the next upload.
+// Tiny "any test or command for me?" check, so a test from the Simulator
+// page or a command from the dashboard reaches the bin in about 2 s.
 //
 // Body (JSON):  {"bin_id":"BIN-01","token":"..."}
-// Replies:      200 {"ok":true,"test":{"mode":"FIRE","seconds_left":23}}
-//               200 {"ok":true,"test":null}
+//               + "cmd_ack":41,"cmd_result":"done"   after doing a command
+// Replies:      200 {"ok":true,"test":null,"cmd":null}
+//               200 {"ok":true,"test":{"mode":"FIRE","seconds_left":23,"drop_ball":false},
+//                    "cmd":{"id":41,"name":"lid_open"}}
 //               401 {"ok":false,"error":"invalid token"}
-// Nothing is saved; readings still go to api/ingest.php.
+// No reading is saved; readings still go to api/ingest.php.
 // =====================================================================
 
 require __DIR__ . '/../lib/db.php';
 require __DIR__ . '/../lib/test_mode.php';
+require __DIR__ . '/../lib/bin_cmd.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_out(['ok' => false, 'error' => 'use POST'], 405);
@@ -29,4 +32,6 @@ if ($bin === null || !hash_equals($bin['device_token'], $token)) {
     json_out(['ok' => false, 'error' => 'invalid token'], 401);
 }
 
-json_out(['ok' => true, 'test' => test_for_device(current_test($conn, $bin_id))]);
+ack_command($conn, $bin_id, $in);
+json_out(['ok' => true, 'test' => test_for_device(current_test($conn, $bin_id)),
+          'cmd' => next_command($conn, $bin_id)]);

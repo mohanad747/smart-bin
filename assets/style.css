@@ -199,6 +199,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
 .chip.FIRE, .chip.full { background: var(--fire); }
 .chip.EMPTIED { background: var(--accent); }
 .chip.OFFLINE, .chip.off { background: var(--offline); }
+.chip.LID_OPENED_SERVICE, .chip.LID_CLOSED_SERVICE, .chip.BALL_REARMED { background: var(--accent); }
+.chip.LOCKED_FULL { background: var(--vapour); color: #3d2a00; }
+.chip.BALL_RELEASED { background: var(--fire); }
 .chip.on { background: var(--accent); }
 .chip.TEST { background: #6a1b9a; }
 .chip.DEMO { background: #fff; color: #5b6673; border: 1px dashed #8a96a3; }   /* example bin, not real */   /* started from the Simulator page, not a real hazard */
@@ -320,3 +323,12 @@ details summary { cursor: pointer; font-weight: 600; }
 .delete-bin { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .delete-bin > div { flex: 1 1 100%; }
 .delete-bin label { margin: 0; flex: 0 1 260px; }
+
+/* dashboard card: automatic lid and fire ball */
+.lidbox { background: #f6f8fa; border-radius: 6px; padding: 8px 9px; margin-bottom: 8px; }
+.lidrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.lidrow .k { font-size: 12px; color: var(--muted); }
+.lidbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.lidbtns .btn[disabled] { opacity: .45; cursor: not-allowed; }
+.cmd-note { margin-top: 6px; }
+.cmd-bad { color: var(--fire); font-weight: 600; }

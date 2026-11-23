@@ -9,9 +9,12 @@
 //    "test":false}
 //   "test" (optional) = true when the state comes from a test command
 //   started on the Simulator page, not from the sensors.
+//   Firmware 1.3.0 also sends (all optional, older firmware does not):
+//    "lid":"CLOSED","ball":"ARMED","hand_cm":85.0 (-1 = nothing near),
+//    "lid_opens":12 (since it started), "cmd_ack":41,"cmd_result":"done"
 //
 // Replies:
-//   200 {"ok":true,"thresholds":{...},"test":null | {"mode":"FIRE","seconds_left":23}}
+//   200 {"ok":true,"thresholds":{...},"test":null | {...},"cmd":null | {"id":41,"name":"lid_open"}}
 //   401 {"ok":false,"error":"invalid token"}
 //   400 {"ok":false,"error":"<reason>"}         (nothing is saved)
 //
@@ -24,6 +27,7 @@ require __DIR__ . '/../lib/db.php';
 require __DIR__ . '/../lib/alerts.php';
 require __DIR__ . '/../lib/test_mode.php';
 require __DIR__ . '/../lib/demo.php';
+require __DIR__ . '/../lib/bin_cmd.php';
 
 const MQ2_WARMUP_S  = 60;   // MQ-2 reads high while its heater warms up: ignore gas before this
 const MERGE_GAP_S   = 120;  // a hazard that comes back within 2 min continues the same event
@@ -105,6 +109,29 @@ if ($fw !== null && (!is_string($fw) || strlen($fw) > 20)) {
     json_out(['ok' => false, 'error' => 'fw must be a short text'], 400);
 }
 
+// --- lid and fire ball (firmware 1.3.0; missing = older firmware, wrong = 400) ---
+function choice_in(array $in, string $key, array $allowed): ?string
+{
+    $v = $in[$key] ?? null;
+    if ($v === null) return null;
+    if (!in_array($v, $allowed, true)) {
+        json_out(['ok' => false, 'error' => "$key must be " . implode(', ', $allowed)], 400);
+    }
+    return $v;
+}
+$lid  = choice_in($in, 'lid', ['CLOSED', 'OPEN_HAND', 'OPEN_SERVICE', 'LOCKED_FULL', 'LOCKED_FIRE']);
+$ball = choice_in($in, 'ball', ['ARMED', 'RELEASED']);
+$hand = number_in($in, 'hand_cm', -1, 400, true);
+if ($hand !== null && $hand < 0) $hand = null;           // -1 = nothing in front of the sensor
+$lid_opens = number_in($in, 'lid_opens', 0, 4294967295, true);
+$lid_opens = $lid_opens === null ? null : (int)$lid_opens;
+// openings since the previous reading (the count starts again when the bin restarts)
+$lid_opened = null;
+if ($lid_opens !== null) {
+    $before     = $bin['lid_opens'] === null ? $lid_opens : (int)$bin['lid_opens'];
+    $lid_opened = min(1000, $lid_opens >= $before ? $lid_opens - $before : $lid_opens);
+}
+
 $th = get_thresholds($conn, $bin_id);
 
 // --- fill % = (empty depth - distance) / empty depth x 100, kept 0..100 ---
@@ -151,11 +178,13 @@ $conn->begin_transaction();
 // --- save the reading (D2) ---
 db_exec($conn,
     'INSERT INTO readings (bin_id, distance_cm, fill_pct, gas_raw, flame, temp_c, humidity,
-                           state, server_state, fan, buzzer, uptime_s, rssi, fw, is_test)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    'sddiiddssiiiisi',
+                           state, server_state, fan, buzzer, uptime_s, rssi, fw, is_test,
+                           lid_state, ball_state, lid_opened)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'sddiiddssiiiisissi',
     [$bin_id, $distance, $fill, $gas, $flame, $temp, $humidity,
-     $state, $server_state, $fan, $buzzer, $uptime, $rssi, $fw, $is_test]);
+     $state, $server_state, $fan, $buzzer, $uptime, $rssi, $fw, $is_test,
+     $lid, $ball, $lid_opened]);
 
 // --- update the bin (D1); COALESCE keeps the last good value when a sensor sent null ---
 db_exec($conn,
@@ -167,17 +196,60 @@ db_exec($conn,
         last_gas_raw = ?, last_flame = ?, last_fan = ?, last_buzzer = ?,
         last_rssi     = COALESCE(?, last_rssi),
         last_uptime_s = COALESCE(?, last_uptime_s),
-        last_fw       = COALESCE(?, last_fw)
+        last_fw       = COALESCE(?, last_fw),
+        lid_state  = COALESCE(?, lid_state),
+        ball_state = COALESCE(?, ball_state),
+        hand_cm    = IF(? IS NULL, hand_cm, ?),
+        lid_opens  = COALESCE(?, lid_opens)
      WHERE bin_id = ?',
-    'sddddiiiiiiss',
+    'sddddiiiiiissssdis',
     [$bin_state, $fill, $distance, $temp, $humidity, $gas, $flame, $fan, $buzzer,
-     $rssi, $uptime, $fw, $bin_id]);
+     $rssi, $uptime, $fw, $lid, $ball, $lid, $hand, $lid_opens, $bin_id]);
 
 // --- events (D3) ---
 // The bin is talking again: close an open OFFLINE event
 db_exec($conn,
     "UPDATE events SET ended_at = NOW()
      WHERE bin_id = ? AND type = 'OFFLINE' AND ended_at IS NULL", 's', [$bin_id]);
+
+// --- lid and fire ball events: what changed since the last reading ---
+ack_command($conn, $bin_id, $in);
+function lid_event(mysqli $conn, string $bin_id, string $type, string $note, int $is_test = 0): void
+{
+    db_exec($conn,
+        'INSERT INTO events (bin_id, type, started_at, ended_at, note, is_test)
+         VALUES (?, ?, NOW(), NOW(), ?, ?)', 'sssi', [$bin_id, $type, $note, $is_test]);
+}
+$old_lid  = $bin['lid_state'];
+$old_ball = $bin['ball_state'];
+if ($lid !== null && $lid !== $old_lid) {
+    if ($lid === 'OPEN_SERVICE') {
+        $by = command_by($conn, $bin_id, 'lid_open', CMD_EXPIRE_S + 60);
+        lid_event($conn, $bin_id, 'LID_OPENED_SERVICE', $by ? "Opened for emptying by $by" : 'Opened for emptying at the bin');
+    } elseif ($old_lid === 'OPEN_SERVICE') {
+        $by = command_by($conn, $bin_id, 'lid_close', 30);
+        lid_event($conn, $bin_id, 'LID_CLOSED_SERVICE',
+            $lid === 'LOCKED_FIRE' ? 'Closed and locked: fire'
+            : ($by ? "Closed by $by" : ($uptime !== null && $uptime < 60 ? 'Closed: the bin restarted' : 'Closed by itself')));
+    }
+    if ($lid === 'LOCKED_FULL') {
+        db_exec($conn,
+            "INSERT INTO events (bin_id, type, started_at, note) VALUES (?, 'LOCKED_FULL', NOW(), ?)",
+            'ss', [$bin_id, 'Lid locked at ' . ($fill === null ? '?' : round($fill)) . '%']);
+    } elseif ($old_lid === 'LOCKED_FULL') {
+        db_exec($conn,
+            "UPDATE events SET ended_at = NOW()
+             WHERE bin_id = ? AND type = 'LOCKED_FULL' AND ended_at IS NULL", 's', [$bin_id]);
+    }
+}
+$ball_released = ($ball === 'RELEASED' && $old_ball === 'ARMED');
+if ($ball_released) {
+    lid_event($conn, $bin_id, 'BALL_RELEASED',
+        $bin_state === 'FIRE' ? 'Dropped into the fire' : 'Dropped by hand (Serial Monitor)', $is_test);
+} elseif ($ball === 'ARMED' && $old_ball === 'RELEASED') {
+    $by = command_by($conn, $bin_id, 'arm_ball', CMD_EXPIRE_S + 60);
+    lid_event($conn, $bin_id, 'BALL_REARMED', $by ? "Re-armed by $by" : 'Re-armed at the bin');
+}
 
 $open = db_one($conn,
     "SELECT * FROM events WHERE bin_id = ? AND type IN ('VAPOUR','FIRE') AND ended_at IS NULL
@@ -257,6 +329,13 @@ if ($fill !== null) {
                 'ss', [$bin_id, $old[EMPTIED_CONFIRM - 1]['created_at']]);
             if ($done === null) {
                 $note = 'Fill ' . round($before) . '% -> ' . round($after) . '%';
+                // who opened the lid for it (in the last 15 minutes)
+                $opened = db_one($conn,
+                    "SELECT note FROM events WHERE bin_id = ? AND type = 'LID_OPENED_SERVICE'
+                       AND started_at >= NOW() - INTERVAL 15 MINUTE ORDER BY id DESC LIMIT 1", 's', [$bin_id]);
+                if ($opened !== null) {
+                    $note .= ', lid ' . lcfirst($opened['note']);
+                }
                 db_exec($conn,
                     "INSERT INTO events (bin_id, type, started_at, ended_at, note)
                      VALUES (?, 'EMPTIED', ?, ?, ?)", 'ssss', [$bin_id, $first_low, $first_low, $note]);
@@ -331,6 +410,7 @@ db_exec($conn,
               $seconds_to_full, $seconds_to_full, $bin_id]);
 
 $test = current_test($conn, $bin_id);   // test started on the Simulator page, if any
+$cmd  = next_command($conn, $bin_id);   // command from the dashboard, if any
 
 $conn->commit();
 
@@ -343,7 +423,9 @@ $reply = json_encode(['ok' => true, 'thresholds' => [
     'temp_rise_c'        => $th['temp_rise_c'],
     'temp_rise_window_s' => $th['temp_rise_window_s'],
     'upload_interval_s'  => $th['upload_interval_s'],
-], 'test' => test_for_device($test)]);
+    'full_pct'           => $th['full_pct'],
+    'empty_depth_cm'     => $depth,              // the bin works out its own fill % for the full lock
+], 'test' => test_for_device($test), 'cmd' => $cmd]);
 
 ignore_user_abort(true);     // keep running after the ESP32 hangs up
 http_response_code(200);
@@ -371,11 +453,17 @@ $may_alert = empty($bin['is_demo']);
 
 if ($fire_event !== null && $may_alert) {
     $show_temp = $temp ?? ($bin['last_temp_c'] === null ? null : (float)$bin['last_temp_c']);
-    [$subject, $text] = fire_message($bin, $show_temp, $now_text, (bool)$event_is_test);
+    [$subject, $text] = fire_message($bin, $show_temp, $now_text, (bool)$event_is_test, $lid, $ball);
     $results = send_alert($conn, $CONFIG, 'FIRE', $bin_id, $fire_event, $subject, $text);
     if (any_success($results)) {
         db_exec($conn, 'UPDATE events SET alert_sent = 1 WHERE id = ?', 'i', [$fire_event]);
     }
+}
+
+// The ball drops a few seconds after the alarm: one short second message
+if ($ball_released && $bin_state === 'FIRE' && $may_alert && $fire_event === null) {
+    [$subject, $text] = ball_message($bin, $now_text, (bool)$event_is_test);
+    send_alert($conn, $CONFIG, 'FIRE', $bin_id, $open['id'] ?? null, $subject, $text);
 }
 
 if ($send_full && $may_alert) {

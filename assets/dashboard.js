@@ -50,6 +50,49 @@ function testChip(e) { return Number(e.is_test) ? ' ' + TEST_CHIP : ''; }
 const DEMO_CHIP = '<span class="chip DEMO" title="Example bin, not real">DEMO</span>';
 function demoChip(x) { return Number(x.is_demo) ? ' ' + DEMO_CHIP : ''; }
 
+// Lid and fire ball (only bins whose firmware reports them)
+const LID_TEXT = { CLOSED: 'Closed', OPEN_HAND: 'Open (hand)', OPEN_SERVICE: 'Open for emptying',
+                   LOCKED_FULL: 'Locked: full', LOCKED_FIRE: 'Locked: fire' };
+const LID_CLS  = { CLOSED: 'ok', OPEN_HAND: 'on', OPEN_SERVICE: 'on', LOCKED_FULL: 'nearly', LOCKED_FIRE: 'FIRE' };
+const CMD_STATUS = { pending: 'waiting for the bin…', sent: 'sent to the bin…', done: 'done ✓',
+                     refused: 'refused by the bin', expired: 'not picked up in time' };
+let cmdError = {};                               // bin_id -> message shown under its buttons
+
+function lidPanel(b) {
+  if (!b.lid_state) return '';
+  const released = b.ball_state === 'RELEASED';
+  const fire = b.state === 'FIRE', real = !b.is_demo;
+  const btn = (name, text, cls, off) => `<button class="btn small ${cls}" data-cmd="${name}" ${off ? 'disabled' : ''}>${text}</button>`;
+  const c = b.command;
+  const note = cmdError[b.bin_id]
+    ? `<span class="cmd-bad">${esc(cmdError[b.bin_id])}</span>`
+    : c ? `<span class="${['refused', 'expired'].includes(c.status) ? 'cmd-bad' : 'muted'}">${esc(c.text)} (${esc(c.by)}): ${CMD_STATUS[c.status]}</span>` : '';
+  return `<div class="lidbox">
+      <div class="lidrow"><span class="k">Lid</span><span class="chip ${LID_CLS[b.lid_state]}">${LID_TEXT[b.lid_state]}</span>
+        <span class="k">Fire ball</span><span class="chip ${released ? 'FIRE' : 'ok'}">${released ? 'Released, refill needed' : 'Armed'}</span></div>
+      ${real ? `<div class="lidbtns">
+        ${btn('lid_open', 'Open for emptying', 'primary', fire || b.offline || b.lid_state === 'OPEN_SERVICE')}
+        ${btn('lid_close', 'Close lid', '', b.offline || b.lid_state !== 'OPEN_SERVICE')}
+        ${released ? btn('arm_ball', 'Re-arm ball', 'warn', fire || b.offline) : ''}</div>` : ''}
+      ${note ? `<div class="small cmd-note">${note}</div>` : ''}
+    </div>`;
+}
+
+async function sendCommand(binId, name) {
+  if (name === 'arm_ball' && !confirm('Has the new ball been hung in the net?')) return;
+  delete cmdError[binId];
+  try {
+    const res = await fetch('api/bin_cmd.php', { method: 'POST',
+      body: new URLSearchParams({ csrf: data.csrf, bin_id: binId, name }) });
+    const text = await res.text();
+    let j = null; try { j = JSON.parse(text); } catch (e) {}
+    if (!j || !j.ok) cmdError[binId] = j ? j.error : 'Not sent: reload the page and try again';
+  } catch (e) { cmdError[binId] = 'Not sent: server not reachable'; }
+  if (cmdError[binId]) setTimeout(() => { delete cmdError[binId]; }, 8000);
+  poll();
+  [1500, 3000, 4500].forEach(ms => setTimeout(poll, ms));    // show "sent", "done" quickly
+}
+
 // Text for the priority list
 function etaText(b) {
   switch (b.prediction_status) {
@@ -249,6 +292,7 @@ function binRow(b, stateCls) {
       <span class="pct" style="color:${color}">${num(b.fill_pct, 0)}%</span>
       <span class="chips">
         ${b.state !== 'NORMAL' ? `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>` : ''}
+        ${b.ball_state === 'RELEASED' ? '<span class="chip FIRE" title="Fire ball released, refill needed">Ball</span>' : ''}
         ${b.test ? TEST_CHIP : ''}
         ${b.offline ? '<span class="chip OFFLINE">Offline</span>' : ''}
         ${b.is_demo ? DEMO_CHIP : ''}
@@ -284,6 +328,7 @@ function drawCards() {
           <div class="small muted">Fill rate: ${b.fill_rate === null ? '–' : num(b.fill_rate / (b.time_scale || 1), 1) + ' %/h'}</div>
         </div>
       </div>
+      ${lidPanel(b)}
       ${gasGauge(b)}
       <div class="metrics">
         <div class="metric"><div class="k">Temperature</div><div class="v">${num(b.temp_c)} °C</div></div>
@@ -292,14 +337,19 @@ function drawCards() {
         <div class="metric"><div class="k">Fan</div><div class="v">${onOff(b.fan)}</div></div>
         <div class="metric"><div class="k">Buzzer</div><div class="v">${onOff(b.buzzer)}</div></div>
         <div class="metric"><div class="k">Last seen</div><div class="v">${esc(ago(b.seconds_ago))}</div></div>
+        ${b.lid_opens_today === null ? '' : `<div class="metric"><div class="k">Lid opened today</div><div class="v">${b.lid_opens_today} ×</div></div>`}
       </div>
       <div class="small muted" style="margin-top:8px">Firmware ${esc(b.fw ?? '–')}</div>
     </div>`;
   }).join('') || '<p class="muted">No active bins. Add one on the Settings page.</p>';
   box.querySelectorAll('.card.mini').forEach(c => c.onclick = () => select(c.dataset.bin, false));
+  box.querySelectorAll('[data-cmd]').forEach(x => x.onclick = () => sendCommand(selected, x.dataset.cmd));
 }
 
 // ---------- event log ----------
+const EVENT_TEXT = { LID_OPENED_SERVICE: 'LID OPENED', LID_CLOSED_SERVICE: 'LID CLOSED', LOCKED_FULL: 'LOCKED: FULL',
+                     BALL_RELEASED: 'BALL RELEASED', BALL_REARMED: 'BALL RE-ARMED' };
+const INSTANT = ['EMPTIED', 'LID_OPENED_SERVICE', 'LID_CLOSED_SERVICE', 'BALL_RELEASED', 'BALL_REARMED'];
 function alertText(e) {
   if (e.type !== 'FIRE') return '–';
   if (Number(e.alert_sent)) return '<span class="chip ok">Sent</span>';
@@ -311,11 +361,11 @@ function drawEvents() {
   const body = el('events');
   if (data.events.length === 0) { body.innerHTML = '<tr class="empty"><td colspan="10">No events yet</td></tr>'; return; }
   body.innerHTML = data.events.map(e => `<tr>
-    <td><span class="chip ${esc(e.type)}">${esc(e.type)}</span>${testChip(e)}${demoChip(e)}</td>
+    <td><span class="chip ${esc(e.type)}">${esc(EVENT_TEXT[e.type] ?? e.type)}</span>${testChip(e)}${demoChip(e)}</td>
     <td>${esc(e.bin_id)}</td>
     <td>${esc(e.started_at)}</td>
     <td>${e.ended_at ? esc(e.ended_at) : '<b>ongoing</b>'}</td>
-    <td>${e.type === 'EMPTIED' ? '–' : esc(duration(Number(e.duration_s)))}</td>
+    <td>${INSTANT.includes(e.type) ? '–' : esc(duration(Number(e.duration_s)))}</td>
     <td>${e.peak_temp_c === null ? '–' : num(e.peak_temp_c) + ' °C'}</td>
     <td>${e.peak_gas_raw ?? '–'}</td>
     <td>${alertText(e)}</td>

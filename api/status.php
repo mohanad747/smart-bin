@@ -12,6 +12,7 @@
 require __DIR__ . '/../lib/auth.php';
 require __DIR__ . '/../lib/test_mode.php';
 require __DIR__ . '/../lib/demo.php';
+require __DIR__ . '/../lib/bin_cmd.php';
 require_login(true);
 
 // ---------------------------------------------------------------------
@@ -23,6 +24,18 @@ $rows = db_all($conn,
      FROM bins b WHERE b.active = 1 ORDER BY b.bin_id');
 
 $demo_scale = demo_speed($conn);
+
+// Lid openings today, and the latest command of each bin (for the buttons)
+$opens = [];
+foreach (db_all($conn, 'SELECT bin_id, SUM(lid_opened) AS n FROM readings
+                        WHERE created_at >= CURDATE() AND lid_opened > 0 GROUP BY bin_id') as $r) {
+    $opens[$r['bin_id']] = (int)$r['n'];
+}
+$commands = [];
+foreach (db_all($conn, 'SELECT * FROM bin_commands
+                        WHERE created_at >= NOW() - INTERVAL 5 MINUTE ORDER BY id') as $c) {
+    $commands[$c['bin_id']] = $c;
+}
 $bins = [];
 foreach ($rows as $r) {
     $th = get_thresholds($conn, $r['bin_id']);
@@ -43,6 +56,12 @@ foreach ($rows as $r) {
                  VALUES (?, 'OFFLINE', ?, 'No reading received')",
                 'ss', [$r['bin_id'], $r['last_seen']]);
         }
+    }
+
+    $cmd = $commands[$r['bin_id']] ?? null;
+    if ($cmd !== null && in_array($cmd['status'], ['pending', 'sent'], true)
+        && strtotime($cmd['created_at']) < time() - CMD_EXPIRE_S) {
+        $cmd['status'] = 'expired';              // nobody picked it up in time
     }
 
     $fill = $r['fill_pct'] === null ? null : (float)$r['fill_pct'];
@@ -77,6 +96,12 @@ foreach ($rows as $r) {
         'buzzer'            => $r['last_buzzer'] === null ? null : (bool)$r['last_buzzer'],
         'rssi'              => $r['last_rssi'] === null ? null : (int)$r['last_rssi'],
         'fw'                => $r['last_fw'],
+        'lid_state'         => $r['lid_state'],              // null = firmware without a lid
+        'ball_state'        => $r['ball_state'],
+        'hand_cm'           => $r['hand_cm'] === null ? null : (float)$r['hand_cm'],
+        'lid_opens_today'   => $r['lid_state'] === null ? null : ($opens[$r['bin_id']] ?? 0),
+        'command'           => $cmd === null ? null : [
+            'id' => (int)$cmd['id'], 'text' => CMD_TEXT[$cmd['name']], 'status' => $cmd['status'], 'by' => $cmd['created_by']],
         'thresholds'        => $th,
         'test'              => current_test($conn, $r['bin_id']),   // running test or null
         'is_demo'           => (bool)$r['is_demo'],                 // example bin, not real

@@ -5,6 +5,7 @@
 //   bin_id  = BIN-01
 //   mode    = FIRE (buzzer ON, fan OFF) | VAPOUR (fan ON) | STOP
 //   seconds = how long, 5..120 (default 30); the test ends by itself
+//   drop_ball = 1: a FIRE test also drops the real fire ball (default: no)
 // =====================================================================
 
 require __DIR__ . '/../lib/auth.php';
@@ -24,7 +25,7 @@ if ($bin === null) {
 }
 
 if ($mode === 'STOP') {
-    db_exec($conn, 'UPDATE bins SET test_mode = NULL, test_until = NULL, test_by = NULL
+    db_exec($conn, 'UPDATE bins SET test_mode = NULL, test_until = NULL, test_by = NULL, test_drop_ball = 0
                     WHERE bin_id = ?', 's', [$bin_id]);
     json_out(['ok' => true, 'test' => null]);
 }
@@ -34,9 +35,11 @@ if (!in_array($mode, ['FIRE', 'VAPOUR'], true)) {
 }
 $seconds = (int)($_POST['seconds'] ?? 30);
 $seconds = max(TEST_MIN_S, min(TEST_MAX_S, $seconds));
+$drop    = ($mode === 'FIRE' && ($_POST['drop_ball'] ?? '') === '1') ? 1 : 0;
 
 db_exec($conn,
-    'UPDATE bins SET test_mode = ?, test_until = NOW() + INTERVAL ? SECOND, test_by = ?
-     WHERE bin_id = ?', 'siss', [$mode, $seconds, current_user(), $bin_id]);
+    'UPDATE bins SET test_mode = ?, test_until = NOW() + INTERVAL ? SECOND, test_by = ?,
+        test_drop_ball = ?
+     WHERE bin_id = ?', 'sisis', [$mode, $seconds, current_user(), $drop, $bin_id]);
 
 json_out(['ok' => true, 'test' => current_test($conn, $bin_id)]);

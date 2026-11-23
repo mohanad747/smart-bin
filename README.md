@@ -5,7 +5,9 @@ fire-safety response. Diploma project (CSNW2203, UTAS Muscat, Fall 2026).
 
 An ESP32 bin unit measures the fill level (HC-SR04), flammable vapour (MQ-2), flame (IR sensor)
 and temperature/humidity (DHT22). It reacts to hazards **on its own** (fan vents vapour; on fire the
-fan stops and the buzzer sounds) and sends every reading over Wi-Fi to a PHP/MySQL server. The
+fan stops, the buzzer sounds, the lid locks and a fire extinguisher ball drops on a confirmed fire).
+The lid opens for a hand, stays locked when the bin is full, and can be opened from the dashboard for
+emptying. The bin sends every reading over Wi-Fi to a PHP/MySQL server. The
 operator dashboard shows a map, fill levels, a priority collection list with predicted time-to-full,
 hazard banners, charts and an event log, and sends an urgent email / WhatsApp alert on fire.
 
@@ -28,7 +30,9 @@ smart_bin/
 │   ├── history.php        chart data (last 6 h)
 │   ├── ack.php            acknowledge a fire alert
 │   ├── test_cmd.php       start/stop a test on the real bin (Simulator page)
-│   ├── device_poll.php    ESP32 asks "any test for me?" every 2 s
+│   ├── device_poll.php    ESP32 asks "any test or command for me?" every 2 s
+│   ├── bin_cmd.php        dashboard commands: open lid, close lid, re-arm ball
+│   ├── alerts.php         hazards for the bar and pop-up on every page
 │   └── wa_qr.php          QR code to link the WhatsApp gateway
 ├── tools/
 │   ├── simulator.php      real-bin tests + fake bin for testing without hardware
@@ -40,10 +44,13 @@ smart_bin/
 │   ├── seed.sql           BIN-01 at UTAS Muscat, admin user, default thresholds
 │   ├── migrate_1_1.sql    upgrade a 1.0 database (test mode columns)
 │   ├── migrate_1_2.sql    upgrade a 1.1 database (demo bins, app settings)
+│   ├── migrate_1_3.sql    upgrade a 1.2 database (lid, fire ball, commands)
 │   └── reset_data.sql     clear readings/events before a demo (keeps bins, settings, users)
-├── firmware/SmartBin/     ESP32 Arduino sketch
+├── firmware/SmartBin/     ESP32 Arduino sketch (bin_logic.h = the lid and ball rules)
+├── firmware/tests/        one small test sketch per wiring stage
 ├── wa-gateway/            WhatsApp sender (Node.js), start with start-wa-gateway.bat
 ├── README.md, TESTING.md
+├── WIRING.md              step-by-step wiring, stage by stage
 ```
 
 ---
@@ -62,8 +69,8 @@ smart_bin/
    C:\xampp\mysql\bin\mysql.exe -u root -p < C:\xampp\htdocs\smart_bin\sql\seed.sql
    ```
    (Press Enter at the password prompt if your MySQL root has no password.)
-   Already have an older database? Import `sql/migrate_1_1.sql` (from 1.0) and then
-   `sql/migrate_1_2.sql` (from 1.1) instead.
+   Already have an older database? Import the ones you miss, in order, instead:
+   `sql/migrate_1_1.sql` (from 1.0), `migrate_1_2.sql` (from 1.1), `migrate_1_3.sql` (from 1.2).
 4. Copy `config.sample.php` to `config.php` and set the MySQL password in `'db' => ['pass' => ...]`.
 5. Open <http://localhost/smart_bin/> and log in:
    - user **admin**, password **SmartBin@2026**
@@ -136,7 +143,8 @@ Then press **Settings → Send test alert**. Every attempt and its result is in 
 
 How alerts behave:
 - **FIRE**: one urgent message per fire event (bin, name, location, Google Maps link,
-  temperature, time, "Call Civil Defence 9999"). Never one per reading. A fire that comes back
+  temperature, what the bin did (lid locked, fire ball), time, "Call Civil Defence 9999"). Never one
+  per reading. When the ball drops, one short second message says so. A fire that comes back
   within 2 minutes continues the same event.
 - **VAPOUR**: dashboard only, no message.
 - **Bin full** (Objective 2): optional, `'notify_full' => true` sends one message when a bin
@@ -163,18 +171,40 @@ How alerts behave:
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
 2. **Boards Manager** → install **esp32 by Espressif Systems** (3.x, tested with 3.0.7).
 3. **Library Manager** → install **DHT sensor library** (Adafruit, accept "Adafruit Unified
-   Sensor" too) and **ArduinoJson** (v7).
+   Sensor" too), **ArduinoJson** (v7) and **ESP32Servo** (3.x).
+   Wiring: follow **[WIRING.md](WIRING.md)** and run the test sketch of each stage first.
 4. In `firmware/SmartBin/` copy `secrets.example.h` to `secrets.h` and fill in:
    Wi-Fi name/password (2.4 GHz), `SERVER_URL` (from Settings), `BIN_ID`, `DEVICE_TOKEN`
    (from Settings → Bins → BIN-01).
 5. Open `firmware/SmartBin/SmartBin.ino`, board **ESP32 Dev Module**, choose the COM port, **Upload**.
 6. **Serial Monitor at 115200** prints one line per second (distance, gas, flame, temperature,
-   rise, state, fan, buzzer, Wi-Fi) and each upload result.
+   rise, state, fan, buzzer, lid, ball, Wi-Fi) and each upload result. Type `help` for the commands:
+   `status`, `lid open`, `lid close`, `ball drop` (asks for YES), `ball arm`, `hand`.
 
 Pins (report Table 2.2): TRIG 19, ECHO 18 (divider), MQ-2 AO 34 (divider), flame DO 27,
-DHT22 4, relay IN 26 (fan on when LOW), buzzer 25. Change them in `config.h`.
+DHT22 4, relay IN 26 (fan on when LOW), buzzer 25, hand sensor TRIG 23 / ECHO 22 (divider), lid servo
+33, ball servo 13. Change them in `config.h`.
+
+**Lid** (checked all the time, most important first)
+1. FIRE: closed and locked. Nothing opens it, not even the dashboard.
+2. "Open for emptying" from the dashboard: open until "Close lid" or 2 min. Allowed when full.
+3. Full (fill ≥ the *Full* threshold, 3 measurements in a row): locked, two short beeps when someone
+   comes near. Unlocks when the fill is 5 points lower. After 5 min without the server this lock is off,
+   so people can still use the bin. The fire lock always stays.
+4. A hand or bag within 20 cm: open, closes 4 s after it leaves.
+
+The flame sensor is ignored while the lid is open and 2 s after it closes (sunlight). The fill level is
+only measured while the lid is closed.
+
+**Fire ball**: the alarm (buzzer, fan off, lid locked, upload) starts on the first fire sign. The ball
+drops only when the fire is **confirmed**: flame seen for 3 s (short flickers allowed), or the
+temperature limit, or a sudden rise. One wrong sensor reading never drops it. It drops once; "released"
+is saved in flash. Hang a new ball, then press **Re-arm ball** on the dashboard (not during a fire).
+Both servos never move at the same time.
 
 **Calibrating**
+- **Servo angles**: find them with `t5_lid` and `t6_ball` (WIRING.md) and put them in `config.h`.
+- **Max fill line**: WIRING.md, "Max fill line". The waste must stay below the hanging ball.
 - **Empty depth**: measure from the ultrasonic sensor to the bottom of the empty bin and set it on
   Settings → Bins. Fill % = (empty depth − distance) ÷ empty depth × 100.
 - **Gas threshold**: power the unit in clean air, wait for the MQ-2 to warm up (gas is ignored for
@@ -193,8 +223,10 @@ DHT22 4, relay IN 26 (fan on when LOW), buzzer 25. Change them in `config.h`.
 **Hardware notes**
 - The relay is a **5 V** relay module (JQC3F-05VDC). On 3.3 V many of these click weakly or not at
   all. If the fan does not switch, move the relay **VCC to the 5 V rail** (IN stays on GPIO26).
-- The safety logic (fan/buzzer) runs on the ESP32 every second and does not need Wi-Fi. If Wi-Fi
-  is down the unit keeps reacting and retries the connection every 15 s.
+- The safety logic (fan, buzzer, lid, fire ball) runs on the ESP32 and does not need Wi-Fi. The network
+  has its own task on the other core, so a slow server never stops it. If Wi-Fi is down the unit keeps
+  reacting and retries the connection every 15 s.
+- The fan must be on the relay's **NO (常开)** terminal. On NC it would run during a fire.
 - The DHT22 tops out at 80 °C. During a fire the firmware sends at most 80 °C so the server does
   not reject the reading.
 
@@ -208,10 +240,12 @@ in the circuit during a demo without a real fire:
 
 | Button | On the bin | On the dashboard |
 |---|---|---|
-| Test fire | buzzer ON, fan OFF | red FIRE banner marked **TEST**, FIRE event marked TEST, alert sent with "TEST ONLY" |
+| Test fire | buzzer ON, fan OFF, lid locked | red FIRE banner marked **TEST**, FIRE event marked TEST, alert sent with "TEST ONLY" |
 | Test gas leak | fan ON, buzzer OFF | amber banner marked **TEST**, VAPOUR event marked TEST |
 | Stop test | back to normal | |
 
+- The **fire ball does not drop in a test** unless you tick "Drop the real fire ball". The tick is for one
+  test only.
 - The command is saved on the bin row; the ESP32 picks it up within **about 2 s**
   (`api/device_poll.php` between uploads, and every upload reply).
 - The test **ends by itself** after the chosen time (15 / 30 / 60 s, max 120 s), even if Wi-Fi drops.
@@ -231,6 +265,8 @@ which the server treats as a FIRE. Fake values now start from the bin's own late
 | Filling up | fill rises each reading (choose the speed) |
 | Gas leak | gas above the threshold, state VAPOUR, fan on |
 | Fire | flame + rising temperature, state FIRE, buzzer on → one alert |
+| Bin full | fill 97 %, lid locked |
+| Hand at the lid | lid opens, then closes 4 s later |
 | Sensor failure | distance, temperature and humidity are `null` |
 | Bin emptied | sends 3 readings at 5 % → EMPTIED event (the server needs 3 low readings in a row) |
 | Wrong token | expect HTTP 401, nothing saved |
@@ -264,14 +300,20 @@ list, predictions and emptying with live, realistic data.
 ```json
 {"bin_id":"BIN-01","token":"device-token-here","distance_cm":42.3,"gas_raw":812,
  "flame":false,"temp_c":31.4,"humidity":40.2,"state":"NORMAL","fan":false,"buzzer":false,
- "uptime_s":1234,"rssi":-61,"fw":"1.1.0","test":false}
+ "lid":"CLOSED","ball":"ARMED","hand_cm":-1,"lid_opens":12,
+ "uptime_s":1234,"rssi":-61,"fw":"1.3.0","test":false}
 ```
 
 - `distance_cm`, `temp_c`, `humidity` may be `null` (sensor read failed). The reading is saved and
   the dashboard keeps showing the last good value.
+- `lid` (CLOSED, OPEN_HAND, OPEN_SERVICE, LOCKED_FULL, LOCKED_FIRE), `ball` (ARMED, RELEASED),
+  `hand_cm` (-1 = nothing near), `lid_opens` (count since start) are optional: firmware 1.1.0 without
+  them still works, and the dashboard then shows no lid.
+- `cmd_ack` + `cmd_result` (`done` / `refused`): the bin finished that command.
 - `test` (optional): `true` when the state comes from a test command, not the sensors.
-- **200** `{"ok":true,"thresholds":{"gas_raw":1800,"temp_limit_c":60,"temp_rise_c":5,"temp_rise_window_s":60,"upload_interval_s":10},"test":null}`
-  — `test` is `{"mode":"FIRE","seconds_left":23}` while a test is running.
+- **200** `{"ok":true,"thresholds":{"gas_raw":1800,"temp_limit_c":60,"temp_rise_c":5,"temp_rise_window_s":60,"upload_interval_s":10,"full_pct":90,"empty_depth_cm":40},"test":null,"cmd":null}`
+  — `test` is `{"mode":"FIRE","seconds_left":23,"drop_ball":false}` while a test is running, `cmd` is
+  `{"id":41,"name":"lid_open"}` when the dashboard sent a command.
 - **401** `{"ok":false,"error":"invalid token"}`: wrong/missing token. Nothing saved.
 - **400** `{"ok":false,"error":"temp_c out of range (-40 to 80)"}`: ranges: distance 0–400,
   temp −40–80, humidity 0–100, gas 0–4095. Nothing saved.
@@ -289,7 +331,12 @@ What the server does with a reading (DFD processes):
 | 7.0 Manage bins and settings | `settings.php` | |
 
 `POST /smart_bin/api/device_poll.php` with `{"bin_id":"BIN-01","token":"..."}` answers
-`{"ok":true,"test":null}` or the running test (401 for a wrong token). Nothing is saved.
+`{"ok":true,"test":null,"cmd":null}`, the running test or a waiting command (401 for a wrong token).
+
+`POST api/bin_cmd.php` (dashboard, login + CSRF): `bin_id`, `name` = `lid_open`, `lid_close` or
+`arm_ball`. A command is offered to the bin until it confirms it (`pending` → `sent` → `done` /
+`refused`) and expires after 2 min. Refused while the bin is offline, and during a fire (`lid_open`,
+`arm_ball`). Openings, closings, re-arming and EMPTIED show the operator's name in the event log.
 
 OFFLINE events: a bin is offline after **3 × its upload interval** with no reading. The event is
 opened when the dashboard notices it and closed by the next reading.
@@ -334,6 +381,10 @@ self-signed certificate. For the ESP32 the certificate should name the laptop IP
 | ESP32 serial: `connection refused` / `connection lost` | wrong `SERVER_URL` IP, Apache stopped, or firewall. Check Settings → ESP32 connection, test the URL from a phone |
 | ESP32 serial: `invalid token` | `DEVICE_TOKEN` / `BIN_ID` do not match Settings → Bins |
 | ESP32 serial: `REJECTED (400)` | a sensor sends an impossible value; the reply says which |
+| ESP32 resets or Wi-Fi drops when a servo moves | servo current: feed the 5 V bus from the second USB port of the power bank (first remove the wire from VIN's rail to the bus, join the grounds) and add 470 µF. See WIRING.md |
+| Lid or ball buttons missing | the bin has not reported a lid: flash firmware 1.3.0 |
+| Lid does not open for a hand | bin full (locked) or FIRE; type `status` and `hand` on the Serial Monitor |
+| Command "not picked up in time" | the bin was offline or busy for 2 min; send it again |
 | Bin shows **Offline** | no reading for 3 × upload interval; check the ESP32's Wi-Fi line |
 | Map is grey | tiles need internet. Markers, cards and the priority list still work |
 | "Database connection failed" | MySQL not started, or wrong password in `config.php` |

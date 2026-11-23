@@ -1,8 +1,9 @@
 <?php
 // =====================================================================
 // Bin simulator (login required). Two parts:
-//  1. Real bin test: makes the ESP32 act as if it saw a fire (buzzer ON)
-//     or a gas leak (fan ON), so the circuit reacts too (api/test_cmd.php).
+//  1. Real bin test: makes the ESP32 act as if it saw a fire (buzzer ON, lid
+//     locked) or a gas leak (fan ON), so the circuit reacts too
+//     (api/test_cmd.php). The fire ball drops only if the box is ticked.
 //  2. Virtual bin: sends fake readings from the browser to the REAL
 //     api/ingest.php, exactly like the ESP32 would - no hardware needed.
 //     Only for DEMO bins: fake readings on a real bin would mix with the
@@ -14,7 +15,7 @@ require_login();
 
 $bins = db_all($conn,
     'SELECT bin_id, name, device_token, empty_depth_cm, fill_pct, is_demo,
-            last_temp_c, last_humidity, last_gas_raw
+            last_temp_c, last_humidity, last_gas_raw, lid_opens
      FROM bins WHERE active = 1 ORDER BY bin_id');
 $real_bins = array_values(array_filter($bins, fn($b) => !$b['is_demo']));   // real bin test
 $demo_bins = array_values(array_filter($bins, fn($b) => (bool)$b['is_demo']));  // virtual bin
@@ -28,6 +29,8 @@ $sim_bins = array_map(fn($b) => [
     'temp'   => $b['last_temp_c'] === null ? 28.0 : (float)$b['last_temp_c'],
     'hum'    => $b['last_humidity'] === null ? 50.0 : (float)$b['last_humidity'],
     'gas'    => $b['last_gas_raw'] === null ? 400 : (int)$b['last_gas_raw'],
+    'opens'  => (int)$b['lid_opens'],
+    'full'   => get_thresholds($conn, $b['bin_id'])['full_pct'],
 ], $demo_bins);
 
 $page_title = 'Smart Bin - Simulator';
@@ -52,6 +55,7 @@ require __DIR__ . '/../lib/header.php';
           <option value="15">15 s</option><option value="30" selected>30 s</option><option value="60">60 s</option>
         </select></label>
     </div>
+    <label><input type="checkbox" id="tDrop">Drop the real fire ball in the fire test</label>
     <p>
       <button class="btn danger" data-test="FIRE">🔥 Test fire</button>
       <button class="btn warn" data-test="VAPOUR">⚠ Test gas leak</button>
@@ -59,8 +63,8 @@ require __DIR__ . '/../lib/header.php';
     </p>
     <div id="tNote"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Test</th><th>Bin state</th><th>Fan</th><th>Buzzer</th><th>Last reading</th></tr></thead>
-      <tbody><tr id="tLive"><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      <thead><tr><th>Test</th><th>Bin state</th><th>Fan</th><th>Buzzer</th><th>Lid</th><th>Fire ball</th><th>Last reading</th></tr></thead>
+      <tbody><tr id="tLive"><td colspan="7" class="muted">Loading…</td></tr></tbody>
     </table></div>
     <?php endif; ?>
   </section>
@@ -96,11 +100,13 @@ require __DIR__ . '/../lib/header.php';
       <button class="btn primary" data-mode="filling">Filling up</button>
       <button class="btn warn" data-mode="gas">Gas leak</button>
       <button class="btn danger" data-mode="fire">Fire</button>
+      <button class="btn" data-mode="full">Bin full</button>
       <button class="btn" data-mode="fail">Sensor failure</button>
       <button class="btn" id="stop">■ Stop</button>
     </p>
     <h3 class="small muted">One-shot</h3>
     <p>
+      <button class="btn" data-once="hand">Hand at the lid</button>
       <button class="btn" data-once="emptied">Bin emptied</button>
       <button class="btn" data-once="badtoken">Wrong token</button>
       <button class="btn" data-once="badvalue">Bad value (150 °C)</button>
@@ -128,7 +134,8 @@ const INGEST = '../api/ingest.php';
 
 let mode = null, timer = null, uptime = 3600;
 // simulated sensor values per bin
-const sim = BINS.map(b => ({ fill: b.fill, temp: b.temp, base: b.temp, hum: b.hum, gas: b.gas }));
+const sim = BINS.map(b => ({ fill: b.fill, temp: b.temp, base: b.temp, hum: b.hum, gas: b.gas,
+                                opens: b.opens, ball: 'ARMED', burning: 0 }));
 
 function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function jitter(x) { return (Math.random() * 2 - 1) * x; }
@@ -145,9 +152,17 @@ function reading(kind) {
   if (kind === 'gas')  { gas = Math.round(2200 + jitter(60)); state = 'VAPOUR'; fan = true; }
   if (kind === 'fire') { s.temp = Math.min(68, s.temp + 4); temp = s.temp; flame = true; buzzer = true; state = 'FIRE'; }
   else s.temp = s.base;
+  if (kind === 'full') s.fill = Math.max(s.fill, 97);
+  if (kind === 'hand') s.opens++;
 
   const fill = Math.max(0, s.fill + jitter(0.3));
   let distance = Math.round(b.depth * (1 - fill / 100) * 10) / 10;
+  // lid and fire ball, like firmware 1.3.0 (the ball drops on the 2nd fire reading)
+  s.burning = kind === 'fire' ? s.burning + 1 : 0;
+  if (s.burning >= 2) s.ball = 'RELEASED';
+  if (kind === 'normal') s.ball = 'ARMED';
+  const isFull = s.fill >= b.full;
+  const lid = kind === 'fire' ? 'LOCKED_FIRE' : isFull ? 'LOCKED_FULL' : kind === 'hand' ? 'OPEN_HAND' : 'CLOSED';
   if (kind === 'fail') { distance = null; temp = null; hum = null; }
 
   uptime += Number(document.getElementById('every').value);
@@ -157,7 +172,8 @@ function reading(kind) {
     gas_raw: gas, flame,
     temp_c: temp === null ? null : Math.round(temp * 10) / 10,
     humidity: hum === null ? null : Math.round(hum * 10) / 10,
-    state, fan, buzzer, uptime_s: uptime, rssi: -55 - Math.round(Math.random() * 10), fw: 'sim-1.0'
+    state, fan, buzzer, lid, ball: s.ball, hand_cm: kind === 'hand' ? 12 : -1, lid_opens: s.opens,
+    uptime_s: uptime, rssi: -55 - Math.round(Math.random() * 10), fw: 'sim-1.3'
   };
 }
 
@@ -171,7 +187,7 @@ async function send(body, label) {
   const log = document.getElementById('log');
   if (log.querySelector('.empty')) log.innerHTML = '';
   const short = `${label}: fill ${body.distance_cm === null ? 'null' : sim[cur()].fill.toFixed(1) + '%'}, `
-              + `temp ${body.temp_c}, gas ${body.gas_raw}, ${body.state}`;
+              + `temp ${body.temp_c}, gas ${body.gas_raw}, ${body.state}, lid ${body.lid}, ball ${body.ball}`;
   const color = code === 200 ? 'var(--ok)' : 'var(--fire)';
   log.insertAdjacentHTML('afterbegin', `<tr><td>${new Date().toLocaleTimeString()}</td>
     <td class="small">${esc(short)}</td><td style="color:${color};font-weight:700">${code || '-'}</td>
@@ -205,6 +221,9 @@ document.querySelectorAll('[data-once]').forEach(btn => btn.onclick = async () =
     // the server only believes an emptying after 3 low readings in a row
     sim[cur()].fill = 5;
     for (let i = 0; i < 3; i++) await send(reading('normal'), 'emptied ' + (i + 1) + '/3');
+  } else if (kind === 'hand') {
+    await send(reading('hand'), 'hand at the lid');
+    setTimeout(() => send(reading(mode || 'normal'), 'hand left'), 4000);
   } else if (kind === 'badtoken') {
     const r = reading('normal'); r.token = 'wrong-token'; send(r, 'wrong token');
   } else if (kind === 'badvalue') {
@@ -227,7 +246,8 @@ function ago(sec) {
 document.querySelectorAll('[data-test]').forEach(btn => btn.onclick = async () => {
   const note = document.getElementById('tNote');
   const body = new URLSearchParams({ csrf: CSRF, bin_id: document.getElementById('tBin').value,
-                                     mode: btn.dataset.test, seconds: document.getElementById('tSeconds').value });
+                                     mode: btn.dataset.test, seconds: document.getElementById('tSeconds').value,
+                                     drop_ball: document.getElementById('tDrop').checked ? '1' : '0' });
   try {
     const res = await fetch('../api/test_cmd.php', { method: 'POST', body });
     const text = await res.text();
@@ -235,8 +255,9 @@ document.querySelectorAll('[data-test]').forEach(btn => btn.onclick = async () =
     if (!j || !j.ok) throw new Error(j ? j.error : text.slice(0, 200));
     note.className = 'flash ok';
     note.textContent = j.test
-      ? `${j.test.mode === 'FIRE' ? 'Fire' : 'Gas leak'} test sent: the bin reacts within about 2 s and stops after ${j.test.seconds_left} s.`
+      ? `${j.test.mode === 'FIRE' ? 'Fire' : 'Gas leak'} test sent: the bin reacts within about 2 s and stops after ${j.test.seconds_left} s.${j.test.drop_ball ? ' It WILL drop the fire ball.' : ''}`
       : 'Test stopped: the bin goes back to normal within about 2 s.';
+    document.getElementById('tDrop').checked = false;       // tick it again for every drop
   } catch (e) {
     note.className = 'flash err';
     note.textContent = 'Could not send the test: ' + e.message;
@@ -251,12 +272,13 @@ async function liveTest() {
     const res = await fetch('../api/status.php', { cache: 'no-store' });
     const j = await res.json();
     const b = j.bins.find(x => x.bin_id === document.getElementById('tBin').value);
-    if (!b) { row.innerHTML = '<td colspan="5" class="muted">Bin not found</td>'; return; }
+    if (!b) { row.innerHTML = '<td colspan="7" class="muted">Bin not found</td>'; return; }
     const test = b.test
       ? `<span class="chip TEST">TEST</span> ${b.test.mode === 'FIRE' ? 'fire' : 'gas leak'}, ${b.test.seconds_left} s left`
       : '<span class="muted">none</span>';
     row.innerHTML = `<td>${test}</td><td><span class="chip ${esc(b.state)}">${esc(b.state)}</span></td>
       <td>${onOff(b.fan)}</td><td>${onOff(b.buzzer)}</td>
+      <td>${esc(b.lid_state ? b.lid_state.replace('_', ' ').toLowerCase() : '–')}</td><td>${esc(b.ball_state ? b.ball_state.toLowerCase() : '–')}</td>
       <td>${b.offline ? '<span class="chip OFFLINE">Offline</span> ' : ''}${esc(ago(b.seconds_ago))}</td>`;
     if (b.offline && b.test) {
       const note = document.getElementById('tNote');
@@ -264,7 +286,7 @@ async function liveTest() {
       note.textContent = `${b.bin_id} is offline: the test only runs if the bin reconnects in the next ${b.test.seconds_left} s.`;
     }
   } catch (e) {
-    row.innerHTML = '<td colspan="5" class="muted">Server not reachable</td>';
+    row.innerHTML = '<td colspan="7" class="muted">Server not reachable</td>';
   }
 }
 if (document.getElementById('tLive')) {

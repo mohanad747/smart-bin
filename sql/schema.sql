@@ -46,11 +46,17 @@ CREATE TABLE IF NOT EXISTS bins (
   last_rssi             SMALLINT     NULL,
   last_uptime_s         INT UNSIGNED NULL,
   last_fw               VARCHAR(20)  NULL,
+  -- automatic lid and fire ball (NULL = older firmware without them)
+  lid_state             ENUM('CLOSED','OPEN_HAND','OPEN_SERVICE','LOCKED_FULL','LOCKED_FIRE') NULL,
+  ball_state            ENUM('ARMED','RELEASED') NULL,
+  hand_cm               DECIMAL(5,1) NULL,                     -- front sensor, NULL = nothing near
+  lid_opens             INT UNSIGNED NULL,                     -- count since the bin started
   full_alerted          TINYINT(1)   NOT NULL DEFAULT 0,       -- "bin full" message sent this cycle
   -- test mode (Simulator page): the real bin acts as if it saw a fire / gas
   test_mode             ENUM('FIRE','VAPOUR') NULL,              -- NULL = no test running
   test_until            DATETIME     NULL,
   test_by               VARCHAR(50)  NULL,
+  test_drop_ball        TINYINT(1)   NOT NULL DEFAULT 0,       -- the fire test may drop the real ball
   created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -75,6 +81,9 @@ CREATE TABLE IF NOT EXISTS readings (
   rssi          SMALLINT     NULL,
   fw            VARCHAR(20)  NULL,
   is_test       TINYINT(1)   NOT NULL DEFAULT 0,               -- state caused by a test command
+  lid_state     ENUM('CLOSED','OPEN_HAND','OPEN_SERVICE','LOCKED_FULL','LOCKED_FIRE') NULL,
+  ball_state    ENUM('ARMED','RELEASED') NULL,
+  lid_opened    SMALLINT UNSIGNED NULL,                        -- lid openings since the previous reading
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_bin_time (bin_id, created_at),
   CONSTRAINT fk_readings_bin FOREIGN KEY (bin_id) REFERENCES bins(bin_id)
@@ -84,12 +93,14 @@ CREATE TABLE IF NOT EXISTS readings (
 -- ---------------------------------------------------------------------
 -- D3 Events: hazard and collection events.
 -- VAPOUR / FIRE / OFFLINE have a start and an end (ended_at NULL = still on).
--- EMPTIED is instant (started_at = ended_at).
+-- LOCKED_FULL too. The others (EMPTIED, LID_*, BALL_*) are instant (started_at = ended_at).
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS events (
   id               INT AUTO_INCREMENT PRIMARY KEY,
   bin_id           VARCHAR(20)  NOT NULL,
-  type             ENUM('VAPOUR','FIRE','OFFLINE','EMPTIED') NOT NULL,
+  type             ENUM('VAPOUR','FIRE','OFFLINE','EMPTIED',
+                        'LID_OPENED_SERVICE','LID_CLOSED_SERVICE','LOCKED_FULL',
+                        'BALL_RELEASED','BALL_REARMED') NOT NULL,
   started_at       DATETIME     NOT NULL,
   ended_at         DATETIME     NULL,
   peak_temp_c      DECIMAL(5,1) NULL,
@@ -120,6 +131,23 @@ CREATE TABLE IF NOT EXISTS settings (
   full_pct            TINYINT     NULL,   -- red from here
   upload_interval_s   SMALLINT    NULL,   -- normal upload interval of the ESP32
   updated_at          DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Commands from the dashboard to a bin (open lid, close lid, re-arm ball)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bin_commands (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  bin_id      VARCHAR(20)  NOT NULL,
+  name        ENUM('lid_open','lid_close','arm_ball') NOT NULL,
+  status      ENUM('pending','sent','done','refused','expired') NOT NULL DEFAULT 'pending',
+  created_by  VARCHAR(50)  NOT NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at     DATETIME     NULL,
+  done_at     DATETIME     NULL,
+  INDEX idx_bin_status (bin_id, status, id),
+  CONSTRAINT fk_commands_bin FOREIGN KEY (bin_id) REFERENCES bins(bin_id)
+    ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------

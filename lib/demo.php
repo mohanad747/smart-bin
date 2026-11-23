@@ -138,7 +138,8 @@ function demo_reset(mysqli $conn): void
                 last_humidity = ?, last_gas_raw = ?, last_flame = 0, last_fan = 0, last_buzzer = 0,
                 last_rssi = -60, last_uptime_s = 86400, last_fw = 'demo', last_seen = NOW() - INTERVAL 20 SECOND,
                 fill_rate_pct_per_hr = NULL, predicted_full_at = NULL, prediction_status = 'NO_DATA',
-                full_alerted = 0, test_mode = NULL, test_until = NULL, test_by = NULL
+                full_alerted = 0, test_mode = NULL, test_until = NULL, test_by = NULL,
+                lid_state = 'CLOSED', ball_state = 'ARMED', hand_cm = NULL, lid_opens = 0
              WHERE bin_id = ?",
             'ddddis', [round($fill, 1), $dist, $temp, $hum, $gas, $id]);
     }
@@ -215,6 +216,12 @@ function demo_tick(mysqli $conn, bool $force = false): void
                 'uptime_s'    => 86400 + time() % 86400,
                 'rssi'        => -55 - mt_rand(0, 15),
                 'fw'          => 'demo',
+                // the lid: people open it while it is not full
+                'lid'         => $fill >= $th['full_pct'] ? 'LOCKED_FULL' : 'CLOSED',
+                'ball'        => $b['ball_state'] ?? 'ARMED',
+                'hand_cm'     => -1,
+                'lid_opens'   => (int)$b['lid_opens']
+                               + ($fill < $th['full_pct'] && mt_rand(1, 100) <= 60 * demo_activity($hour) ? 1 : 0),
             ]);
             $ch = curl_init($url);
             curl_setopt_array($ch, [
