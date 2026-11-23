@@ -16,3 +16,8 @@ _practice/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Team notes with names: kept on our laptops, not in the public repo
+CLAUDE.md
+CATCHUP_LOG.md
+HANDOFF_*.md
